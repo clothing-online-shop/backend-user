@@ -11,6 +11,7 @@ import * as argon2 from 'argon2';
 import { User } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
 import { UsersService } from '../users/users.service';
+import { MailService } from '../mail/mail.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
@@ -31,6 +32,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   async register(dto: RegisterDto): Promise<Omit<User, 'password'>> {
@@ -46,6 +48,8 @@ export class AuthService {
       fullName: dto.fullName,
       phone: dto.phone,
     });
+
+    await this.mailService.sendWelcomeEmail(user.email, user.fullName);
 
     return toSafeUser(user);
   }
@@ -133,10 +137,12 @@ export class AuthService {
       },
     );
 
-    // TODO: gửi email thật qua SendGrid/SES ở sprint sau. Hiện log ra console để dev test.
-    this.logger.log(
-      `Reset password link for ${email}: /reset-password?token=${resetToken}`,
+    const webOrigin = this.config.get<string>(
+      'WEB_ORIGIN',
+      'http://localhost:3000',
     );
+    const resetLink = `${webOrigin}/reset-password?token=${resetToken}`;
+    await this.mailService.sendPasswordResetEmail(email, resetLink);
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {

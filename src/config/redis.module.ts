@@ -1,10 +1,25 @@
-import { Global, Module } from '@nestjs/common';
+import {
+  Global,
+  Inject,
+  Injectable,
+  Module,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 
 export const REDIS_CLIENT = 'REDIS_CLIENT';
 
 // TODO: wire up caching/session helpers on top of this client in a later sprint
+@Injectable()
+class RedisLifecycle implements OnModuleDestroy {
+  constructor(@Inject(REDIS_CLIENT) private readonly client: Redis) {}
+
+  async onModuleDestroy(): Promise<void> {
+    await this.client.quit();
+  }
+}
+
 @Global()
 @Module({
   providers: [
@@ -17,6 +32,7 @@ export const REDIS_CLIENT = 'REDIS_CLIENT';
         );
       },
     },
+    RedisLifecycle,
   ],
   exports: [REDIS_CLIENT],
 })

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  lint-build-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clothing_shop_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/clothing_shop_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-test-access-secret
+      JWT_REFRESH_SECRET: ci-test-refresh-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      # backend-user chỉ generate + apply migration đã có (không tạo migration mới ở đây)
+      - name: Prisma generate & apply known migrations
+        run: |
+          pnpm prisma:generate
+          pnpm exec prisma migrate deploy
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit test
+        run: pnpm test
+
+      - name: E2E test
+        run: pnpm test:e2e
+
+  # Deploy job — cần điền secret của nơi host thật (Railway/Render/VPS...) trước khi bật.
+  # deploy:
+  #   needs: lint-build-test
+  #   if: github.ref == 'refs/heads/main'
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - run: echo "TODO: thêm bước deploy khi đã chọn nền tảng hosting"

@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { captureException } from '../../config/sentry';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -18,7 +19,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
 
     const isHttpException = exception instanceof HttpException;
-    const statusCode = isHttpException
+    const statusCode: number = isHttpException
       ? exception.getStatus()
       : HttpStatus.INTERNAL_SERVER_ERROR;
 
@@ -41,6 +42,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       `${request.method} ${request.url} -> ${statusCode}`,
       isHttpException ? undefined : (exception as Error)?.stack,
     );
+
+    // Chỉ gửi lỗi 5xx thật (bug/crash) lên Sentry — lỗi 4xx (validation, 401, 404...)
+    // là hành vi nghiệp vụ bình thường, không phải sự cố cần tracking.
+    if (statusCode >= 500) {
+      captureException(exception);
+    }
 
     response.status(statusCode).json({
       statusCode,
