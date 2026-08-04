@@ -80,6 +80,8 @@ Server chạy ở `http://localhost:3001`, Swagger docs tại `http://localhost:
 | `PORT` | Mặc định `3001` |
 | `WEB_ORIGIN` | Origin của `frontend-website` được phép gọi CORS (mặc định `http://localhost:3000`) |
 | `CLOUDINARY_*` | *(không dùng ở backend này — upload ảnh chỉ có ở backend-cms)* |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Cấu hình gửi email (quên mật khẩu, chào mừng khi đăng ký). Để trống thì `MailService` tự fallback log ra console thay vì gửi thật — không bắt buộc ở dev local |
+| `SENTRY_DSN` | DSN của Sentry để forward lỗi 5xx — để trống thì bỏ qua, không bắt buộc ở dev local |
 
 ## Prisma — ai chạy migration?
 
