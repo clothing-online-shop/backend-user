@@ -14,6 +14,8 @@ datasource db {
 enum UserRole {
   CUSTOMER
   ADMIN
+  WAREHOUSE_STAFF
+  MARKETING
 }
 
 enum UserStatus {
