@@ -114,12 +114,16 @@ export class ProductsService {
 
   private async resolveCategoryIds(slugOrId: string): Promise<string[]> {
     const category = await this.prisma.category.findFirst({
-      where: { OR: [{ slug: slugOrId }, { id: slugOrId }] },
+      where: { OR: [{ slug: slugOrId }, { id: slugOrId }], isActive: true },
       select: { id: true },
     });
     if (!category) return [];
 
+    // Chỉ lấy danh mục đang hiện: cây con của 1 danh mục con đang ẩn sẽ không
+    // bao giờ được nối vào childrenMap bên dưới, nên tự động không lọt sản phẩm
+    // của nhánh bị ẩn ra danh sách — không cần đệ quy kiểm tra isActive thủ công.
     const all = await this.prisma.category.findMany({
+      where: { isActive: true },
       select: { id: true, parentId: true },
     });
     const childrenMap = new Map<string, string[]>();

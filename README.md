@@ -32,8 +32,8 @@ Chỉ giữ lại phần dành cho khách hàng — mọi thao tác quản trị
 | | `POST /auth/refresh` | Cấp lại token từ refresh token |
 | | `POST /auth/forgot-password`, `POST /auth/reset-password` | Quên/đặt lại mật khẩu (dev: log link ra console) |
 | | `GET /auth/me` | Thông tin user hiện tại (cần Bearer token) |
-| `categories` | `GET /categories`, `GET /categories/:slug` | Chỉ trả danh mục đang `isActive` — không có route tạo/sửa/xóa |
-| `products` | `GET /products`, `GET /products/:slug` | Luôn lọc `status = ACTIVE`, hỗ trợ filter theo category/giá/size/màu/search/sort/phân trang |
+| `categories` | `GET /categories`, `GET /categories/:slug` | Chỉ trả danh mục đang `isActive` — không có route tạo/sửa/xóa. Ẩn 1 danh mục cha (`isActive = false`) sẽ ẩn cascade toàn bộ danh mục con bên dưới, kể cả khi con vẫn `isActive = true` — áp dụng cho cả cây (`GET /categories`) lẫn truy cập trực tiếp bằng slug (`GET /categories/:slug`) |
+| `products` | `GET /products`, `GET /products/:slug` | Luôn lọc `status = ACTIVE`, hỗ trợ filter theo category/giá/size/màu/search/sort/phân trang. Lọc theo `category` cũng cascade theo `isActive`: sản phẩm thuộc danh mục con đang ẩn (hoặc con của danh mục cha đang ẩn) không xuất hiện khi lọc theo danh mục cha |
 | `users` | *(chưa có route)* | Scaffold cho tính năng profile/sổ địa chỉ, sẽ triển khai sau |
 | `cart` | *(chưa có route)* | Scaffold giỏ hàng, triển khai sau |
 | `orders` | *(chưa có route)* | Scaffold tạo đơn + xem đơn của chính user đăng nhập, triển khai sau |
