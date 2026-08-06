@@ -144,17 +144,19 @@ model Category {
 }
 
 model Product {
-  id          String        @id @default(cuid())
-  name        String
-  slug        String        @unique
-  description String?
-  categoryId  String
-  basePrice   Decimal       @db.Decimal(12, 2)
-  status      ProductStatus @default(DRAFT)
-  thumbnail   String?
-  images      String[]      @default([])
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id                String        @id @default(cuid())
+  name              String
+  slug              String        @unique
+  description       String?
+  categoryId        String
+  basePrice         Decimal       @db.Decimal(12, 2)
+  status            ProductStatus @default(DRAFT)
+  thumbnail         String?
+  thumbnailPublicId String?
+  images            String[]      @default([])
+  imagePublicIds    String[]      @default([])
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   category Category         @relation(fields: [categoryId], references: [id])
   variants ProductVariant[]
