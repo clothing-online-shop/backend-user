@@ -84,7 +84,8 @@ export class ProductsService {
       },
     });
 
-    if (!product || product.status !== ProductStatus.ACTIVE) {
+    const status: ProductStatus | undefined = product?.status;
+    if (!product || status !== ProductStatus.ACTIVE) {
       throw new NotFoundException('Không tìm thấy sản phẩm');
     }
 
