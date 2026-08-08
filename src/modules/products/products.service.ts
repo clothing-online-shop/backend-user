@@ -8,7 +8,7 @@ import {
 } from './dto/list-products-query.dto';
 
 type ProductWithStockVariants = Product & {
-  variants: { stockQuantity: number }[];
+  variants: { stockQuantity: number; color: string }[];
 };
 
 const RELATED_PRODUCTS_LIMIT = 8;
@@ -58,7 +58,7 @@ export class ProductsService {
         orderBy: resolveOrderBy(query.sort),
         skip: (page - 1) * limit,
         take: limit,
-        include: { variants: { select: { stockQuantity: true } } },
+        include: { variants: { select: { stockQuantity: true, color: true } } },
       }),
       this.prisma.product.count({ where }),
     ]);
@@ -89,29 +89,61 @@ export class ProductsService {
       throw new NotFoundException('Không tìm thấy sản phẩm');
     }
 
-    const relatedProducts = await this.prisma.product.findMany({
-      where: {
-        categoryId: product.categoryId,
-        id: { not: product.id },
-        status: ProductStatus.ACTIVE,
-      },
-      include: { variants: { select: { stockQuantity: true } } },
-      take: RELATED_PRODUCTS_LIMIT,
-    });
+    const [relatedProducts, ancestors] = await Promise.all([
+      this.prisma.product.findMany({
+        where: {
+          categoryId: product.categoryId,
+          id: { not: product.id },
+          status: ProductStatus.ACTIVE,
+        },
+        include: { variants: { select: { stockQuantity: true, color: true } } },
+        take: RELATED_PRODUCTS_LIMIT,
+      }),
+      this.resolveCategoryAncestors(product.category.parentId),
+    ]);
 
     return {
       ...toListItem(product),
       description: product.description,
+      material: product.material,
+      careInstructions: product.careInstructions,
       images: product.images,
       category: {
         id: product.category.id,
         name: product.category.name,
         slug: product.category.slug,
+        // Từ danh mục gốc tới danh mục cha trực tiếp (không gồm chính category hiện tại)
+        // — dùng để dựng breadcrumb đầy đủ nhiều cấp ở PDP.
+        ancestors,
       },
       variants: product.variants.map(toVariantDto),
       reviews: product.reviews,
       relatedProducts: relatedProducts.map(toListItem),
     };
+  }
+
+  private async resolveCategoryAncestors(
+    parentId: string | null,
+  ): Promise<{ id: string; name: string; slug: string }[]> {
+    const chain: { id: string; name: string; slug: string }[] = [];
+    let cursor = parentId;
+
+    while (cursor) {
+      const parent: {
+        id: string;
+        name: string;
+        slug: string;
+        parentId: string | null;
+      } | null = await this.prisma.category.findUnique({
+        where: { id: cursor },
+        select: { id: true, name: true, slug: true, parentId: true },
+      });
+      if (!parent) break;
+      chain.unshift({ id: parent.id, name: parent.name, slug: parent.slug });
+      cursor = parent.parentId;
+    }
+
+    return chain;
   }
 
   private async resolveCategoryIds(slugOrId: string): Promise<string[]> {
@@ -171,9 +203,11 @@ function toListItem(product: ProductWithStockVariants) {
     slug: product.slug,
     thumbnail: product.thumbnail,
     basePrice: product.basePrice.toNumber(),
+    salePrice: product.salePrice?.toNumber() ?? null,
     status: product.status,
     categoryId: product.categoryId,
     totalStock: product.variants.reduce((sum, v) => sum + v.stockQuantity, 0),
+    colors: [...new Set(product.variants.map((v) => v.color))],
     createdAt: product.createdAt,
   };
 }
