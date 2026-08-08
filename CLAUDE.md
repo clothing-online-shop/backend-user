@@ -72,6 +72,11 @@ src/modules/<ten-module>/
 - Auth, Orders, Payments là 3 module bắt buộc phải có test (unit cho service, e2e cho luồng chính) trước khi coi là "xong" — đây là các luồng liên quan tiền/đơn hàng, lỗi ở đây ảnh hưởng trực tiếp khách hàng.
 - Chạy `pnpm --filter @clothing-shop/be test` trước khi coi 1 module là hoàn thành.
 
+## Bắt đầu tính năng mới
+
+- Trước khi code: `git checkout develop && git pull` để lấy code mới nhất, sau đó tạo branch mới từ `develop` với tên phù hợp tính năng đang làm (`feature/<mo-ta-ngan>`, `fix/<mo-ta-ngan>`) — không code thẳng trên `develop`.
+- Sau khi code xong, trước khi báo hoàn thành/mở PR: chủ động tự review lại toàn bộ diff theo đúng quy ước trong `CLAUDE.md` này và `README.md` của repo — không chỉ dựa vào lint/build pass.
+
 ## Trước khi mở PR
 
 1. `pnpm --filter @clothing-shop/be lint` — 0 lỗi.
