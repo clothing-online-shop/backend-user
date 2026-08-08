@@ -40,12 +40,21 @@ src/modules/<ten-module>/
 - Không bao giờ trả field `password` ra response — xem cách `auth.service.ts` dùng `toSafeUser()` để loại bỏ trước khi trả về.
 - Mật khẩu luôn hash bằng `argon2` (`argon2.hash` / `argon2.verify`), không tự viết hàm hash khác, không lưu plaintext dù chỉ tạm thời (kể cả trong log).
 
-## Database (Prisma)
+## Database (Prisma) — schema dùng chung với `backend-cms`
 
-- Mọi thay đổi schema đi qua `prisma/schema.prisma` rồi chạy `pnpm --filter @clothing-shop/be prisma:migrate` (`prisma migrate dev --name <mo-ta-thay-doi>`) — không sửa tay migration đã áp dụng, không sửa DB trực tiếp qua pgAdmin cho thay đổi cấu trúc.
+`backend-user` và `backend-cms` cùng ghi/đọc **1 Postgres duy nhất**. Để tránh lệch schema (đã từng gây lỗi 500 `type "public.ProductStatus" does not exist` trên UAT khi `backend-cms` đổi cấu trúc bảng mà `backend-user` không biết), `backend-user` **không tự khai báo `prisma/schema.prisma` hay migration riêng nữa**. Toàn bộ schema thật nằm trong git submodule `vendor/backend-cms` (trỏ vào repo `backend-cms`), là nơi duy nhất sở hữu migration và chạy `prisma migrate deploy`.
+
+- Sau khi `git clone`/`git pull` repo này: chạy `git submodule update --init --recursive` để lấy schema (không tự động).
+- `pnpm prisma:generate` / `pnpm prisma:studio` / `pnpm seed` đều đã trỏ sẵn `--schema=vendor/backend-cms/prisma/schema.prisma` trong `package.json` — không tự thêm schema riêng ở `backend-user`.
+- **Không bao giờ đổi cấu trúc bảng (thêm/sửa model) từ phía `backend-user`** — mọi thay đổi schema dùng chung phải làm ở repo `backend-cms`. Khi `backend-cms` đổi schema và đã deploy:
+  ```
+  cd vendor/backend-cms && git fetch && git checkout <commit-mới-trên-develop> && cd ../..
+  git add vendor/backend-cms
+  pnpm prisma:generate
+  # build/test lại, sửa code nếu field/model đổi, rồi commit + push
+  ```
 - Không import `@prisma/client` trực tiếp trong service để tạo `PrismaClient` mới — luôn inject `PrismaService` (đã được `PrismaModule` quản lý lifecycle connect/disconnect).
-- Đặt tên bảng (`@@map`) theo snake_case số nhiều (`users`, `product_variants`) như đã có, giữ nhất quán khi thêm bảng mới.
-- Quan hệ 1-nhiều/n-n phải có `@@index` trên khóa ngoại hay dùng (xem các model hiện tại làm mẫu).
+- DB không còn dùng Postgres enum cho các cột trạng thái dạng số (ví dụ `Product.status`) — dùng enum TS cục bộ mirror giá trị (xem `src/modules/products/product-status.enum.ts`), không import enum trạng thái từ `@prisma/client`.
 
 ## Cấu hình & bí mật
 
@@ -67,4 +76,4 @@ src/modules/<ten-module>/
 
 1. `pnpm --filter @clothing-shop/be lint` — 0 lỗi.
 2. `pnpm --filter @clothing-shop/be build` — build qua.
-3. Nếu đổi schema: đã tạo migration và test `prisma migrate dev` chạy sạch từ đầu (không chỉ chạy được trên máy đã có data cũ).
+3. Nếu bump submodule `vendor/backend-cms` lên commit mới: đã `pnpm prisma:generate` lại và build/test qua với schema mới.

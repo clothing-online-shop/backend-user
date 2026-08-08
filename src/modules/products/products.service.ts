@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Product, ProductStatus, ProductVariant } from '@prisma/client';
+import { Prisma, Product, ProductVariant } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
+import { ProductStatus } from './product-status.enum';
 import {
   ListProductsQueryDto,
   ProductSort,
