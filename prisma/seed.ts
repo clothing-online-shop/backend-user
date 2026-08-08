@@ -1,6 +1,7 @@
-import { PrismaClient, ProductStatus } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { generateSlug } from '../src/common/utils/slug.util';
+import { ProductStatus } from '../src/modules/products/product-status.enum';
 
 const prisma = new PrismaClient();
 
