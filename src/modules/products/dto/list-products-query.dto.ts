@@ -51,6 +51,11 @@ export class ListProductsQueryDto {
   @IsString()
   search?: string;
 
+  @ApiPropertyOptional({ description: 'Lọc theo id thương hiệu' })
+  @IsOptional()
+  @IsString()
+  brandId?: string;
+
   @ApiPropertyOptional({ enum: PRODUCT_SORT_VALUES })
   @IsOptional()
   @IsIn(PRODUCT_SORT_VALUES)

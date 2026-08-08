@@ -1,14 +1,11 @@
-// LƯU Ý: file này phải giống hệt backend-cms/prisma/schema.prisma (cùng trỏ 1 database).
-// Chỉ chạy `prisma migrate dev` ở backend-cms. Ở backend-user chỉ chạy `prisma generate`.
-// Mọi thay đổi schema phải làm bên backend-cms trước, rồi copy schema.prisma + thư mục
-// prisma/migrations sang đây để giữ đồng bộ.
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum UserRole {
@@ -44,12 +41,6 @@ enum DiscountType {
   FIXED_AMOUNT
 }
 
-enum ProductStatus {
-  DRAFT
-  ACTIVE
-  INACTIVE
-}
-
 enum StockMovementType {
   IMPORT
   EXPORT
@@ -72,15 +63,15 @@ enum TransactionStatus {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  password      String
-  phone         String?
-  fullName      String
-  role          UserRole  @default(CUSTOMER)
-  status        UserStatus @default(ACTIVE)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id        String     @id @default(cuid())
+  email     String     @unique
+  password  String
+  phone     String?
+  fullName  String
+  role      UserRole   @default(CUSTOMER)
+  status    UserStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   addresses      Address[]
   carts          Cart[]
@@ -125,42 +116,100 @@ model Address {
 }
 
 model Category {
-  id        String     @id @default(cuid())
-  name      String
-  slug      String     @unique
-  image     String?
-  isActive  Boolean    @default(true)
-  sortOrder Int        @default(0)
-  parentId  String?
-  parent    Category?  @relation("CategoryToCategory", fields: [parentId], references: [id])
-  children  Category[] @relation("CategoryToCategory")
-  products  Product[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id            String     @id @default(cuid())
+  name          String
+  slug          String     @unique
+  image         String?
+  imagePublicId String?
+  isActive      Boolean    @default(true)
+  sortOrder     Int        @default(0)
+  parentId      String?
+  parent        Category?  @relation("CategoryToCategory", fields: [parentId], references: [id])
+  children      Category[] @relation("CategoryToCategory")
+  products      Product[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
   @@index([parentId])
   @@map("categories")
 }
 
 model Product {
-  id          String        @id @default(cuid())
-  name        String
-  slug        String        @unique
-  description String?
-  categoryId  String
-  basePrice   Decimal       @db.Decimal(12, 2)
-  status      ProductStatus @default(DRAFT)
-  thumbnail   String?
-  images      String[]      @default([])
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id                String        @id @default(cuid())
+  name              String
+  slug              String        @unique
+  description       String?
+  material          String?
+  careInstructions  String?
+  brandId           String?
+  categoryId        String
+  basePrice         Decimal       @db.Decimal(12, 2)
+  salePrice         Decimal?      @db.Decimal(12, 2)
+  status            Int           @default(0)
+  thumbnail         String?
+  thumbnailPublicId String?
+  images            String[]      @default([])
+  imagePublicIds    String[]      @default([])
+  metaTitle         String?
+  metaDescription   String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
-  category Category         @relation(fields: [categoryId], references: [id])
-  variants ProductVariant[]
-  reviews  Review[]
+  category    Category             @relation(fields: [categoryId], references: [id])
+  brand       Brand?               @relation(fields: [brandId], references: [id])
+  variants    ProductVariant[]
+  reviews     Review[]
+  collections CollectionProduct[]
 
   @@index([categoryId])
+  @@index([brandId])
   @@map("products")
+}
+
+model Brand {
+  id          String   @id @default(cuid())
+  name        String
+  logo        String?
+  description String?
+  origin      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products Product[]
+
+  @@map("brands")
+}
+
+model Collection {
+  id             String   @id @default(cuid())
+  name           String
+  slug           String   @unique
+  banner         String?
+  bannerPublicId String?
+  description    String?
+  startDate      DateTime
+  endDate        DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  products CollectionProduct[]
+
+  @@map("collections")
+}
+
+model CollectionProduct {
+  id           String   @id @default(cuid())
+  collectionId String
+  productId    String
+  createdAt    DateTime @default(now())
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([collectionId, productId])
+  @@index([productId])
+  @@index([collectionId])
+  @@map("collection_products")
 }
 
 model ProductVariant {
@@ -183,10 +232,10 @@ model ProductVariant {
 }
 
 model Cart {
-  id        String     @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    String
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   items CartItem[]
@@ -228,11 +277,11 @@ model Order {
 }
 
 model OrderItem {
-  id                String  @id @default(cuid())
-  orderId           String
-  productVariantId  String
-  quantity          Int
-  priceAtPurchase   Decimal @db.Decimal(12, 2)
+  id               String  @id @default(cuid())
+  orderId          String
+  productVariantId String
+  quantity         Int
+  priceAtPurchase  Decimal @db.Decimal(12, 2)
 
   order          Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productVariant ProductVariant @relation(fields: [productVariantId], references: [id])

@@ -33,6 +33,11 @@ export class ProductsController {
   })
   @ApiQuery({ name: 'search', required: false })
   @ApiQuery({
+    name: 'brandId',
+    required: false,
+    description: 'Lọc theo id thương hiệu',
+  })
+  @ApiQuery({
     name: 'sort',
     required: false,
     enum: ['price_asc', 'price_desc', 'newest', 'best_selling'],

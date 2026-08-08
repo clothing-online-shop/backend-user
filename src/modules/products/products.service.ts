@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Product, ProductStatus, ProductVariant } from '@prisma/client';
+import { Prisma, Product, ProductVariant } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
+import { ProductStatus } from './product-status.enum';
 import {
   ListProductsQueryDto,
   ProductSort,
@@ -12,6 +13,11 @@ type ProductWithStockVariants = Product & {
 
 const RELATED_PRODUCTS_LIMIT = 8;
 const DEFAULT_PAGE_LIMIT = 20;
+// product.status là number thô (cột Int, không phải Prisma enum) — khai riêng hằng số
+// kiểu number (không phải type assertion, vì eslint --fix tự xoá assertion nó coi là
+// "thừa" so với tsc) để so sánh product.status !== ACTIVE_STATUS không bị
+// no-unsafe-enum-comparison.
+const ACTIVE_STATUS: number = ProductStatus.ACTIVE;
 
 @Injectable()
 export class ProductsService {
@@ -51,6 +57,10 @@ export class ProductsService {
       where.name = { contains: query.search, mode: 'insensitive' };
     }
 
+    if (query.brandId) {
+      where.brandId = query.brandId;
+    }
+
     const [products, total] = await this.prisma.$transaction([
       this.prisma.product.findMany({
         where,
@@ -83,7 +93,7 @@ export class ProductsService {
       },
     });
 
-    if (!product || product.status !== ProductStatus.ACTIVE) {
+    if (!product || product.status !== ACTIVE_STATUS) {
       throw new NotFoundException('Không tìm thấy sản phẩm');
     }
 
@@ -167,6 +177,7 @@ function toListItem(product: ProductWithStockVariants) {
     basePrice: product.basePrice.toNumber(),
     status: product.status,
     categoryId: product.categoryId,
+    brandId: product.brandId,
     totalStock: product.variants.reduce((sum, v) => sum + v.stockQuantity, 0),
     createdAt: product.createdAt,
   };
