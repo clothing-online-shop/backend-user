@@ -2,6 +2,7 @@ import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
 import { ListProductsQueryDto } from './dto/list-products-query.dto';
+import { AutocompleteQueryDto } from './dto/autocomplete-query.dto';
 
 @ApiTags('products')
 @Controller('products')
@@ -45,6 +46,18 @@ export class ProductsController {
   })
   findAll(@Query() query: ListProductsQueryDto) {
     return this.productsService.findAll(query);
+  }
+
+  // Đặt trước @Get(':slug') — nếu để sau, request tới /products/autocomplete
+  // sẽ bị Nest match nhầm vào findBySlug với slug = "autocomplete".
+  @Get('autocomplete')
+  @ApiOperation({
+    summary:
+      'Gợi ý autocomplete khi gõ tìm kiếm (chỉ trả kết quả khi q >= 2 ký tự, tối đa 8 sản phẩm)',
+  })
+  @ApiQuery({ name: 'q', required: false })
+  autocomplete(@Query() query: AutocompleteQueryDto) {
+    return this.productsService.autocomplete(query.q);
   }
 
   @Get(':slug')
