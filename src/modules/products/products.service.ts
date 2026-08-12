@@ -13,6 +13,7 @@ type ProductWithStockVariants = Product & {
 
 const RELATED_PRODUCTS_LIMIT = 8;
 const DEFAULT_PAGE_LIMIT = 20;
+const AUTOCOMPLETE_LIMIT = 8;
 
 @Injectable()
 export class ProductsService {
@@ -48,8 +49,16 @@ export class ProductsService {
       };
     }
 
+    // Giữ where trước khi gắn điều kiện search để nhánh fuzzy fallback bên dưới
+    // tái dùng đúng các filter category/price/size/color, không lặp lại logic.
+    const baseWhere: Prisma.ProductWhereInput = { ...where };
+
     if (query.search) {
-      where.name = { contains: query.search, mode: 'insensitive' };
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { description: { contains: query.search, mode: 'insensitive' } },
+        { brand: { name: { contains: query.search, mode: 'insensitive' } } },
+      ];
     }
 
     const [products, total] = await this.prisma.$transaction([
@@ -63,6 +72,12 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
+    // Không khớp chính xác/substring ở tên-mô tả-thương hiệu -> thử tìm gần đúng
+    // (fuzzy, chịu được gõ sai/thiếu dấu) trước khi kết luận không có kết quả.
+    if (query.search && total === 0) {
+      return this.findAllFuzzy(query.search, baseWhere, page, limit);
+    }
+
     return {
       data: products.map(toListItem),
       meta: {
@@ -72,6 +87,97 @@ export class ProductsService {
         totalPages: total === 0 ? 0 : Math.ceil(total / limit),
       },
     };
+  }
+
+  private async findAllFuzzy(
+    term: string,
+    baseWhere: Prisma.ProductWhereInput,
+    page: number,
+    limit: number,
+  ) {
+    // word_similarity (không phải similarity thường) — vì query search chỉ là 1 cụm
+    // ngắn, cần so với "đoạn khớp tốt nhất" trong tên/mô tả/thương hiệu (vốn dài hơn
+    // nhiều so với query) thay vì so toàn chuỗi, nếu không description gần như luôn
+    // fail dù khớp rõ ràng (đã tự tay verify: similarity('cao cap', description dài
+    // ~90 ký tự) chỉ ra ~0.08 dù cụm đó nằm nguyên trong description).
+    // Ngưỡng 0.5 cho tên/thương hiệu, 0.3 cho mô tả — đã đối chiếu với data seed thật để
+    // vừa bắt được case gõ không dấu phổ biến, vừa không lôi kéo quá nhiều sản phẩm
+    // không liên quan chỉ vì trùng vài từ chung (vd "quần"/"nam").
+    const matches = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT p.id
+      FROM products p
+      LEFT JOIN brands b ON b.id = p."brandId"
+      WHERE p.status = ${ProductStatus.ACTIVE}
+        AND (
+          word_similarity(immutable_unaccent(${term}), immutable_unaccent(p.name)) > 0.5
+          OR word_similarity(immutable_unaccent(${term}), immutable_unaccent(coalesce(p.description, ''))) > 0.5
+          OR word_similarity(immutable_unaccent(${term}), immutable_unaccent(coalesce(b.name, ''))) > 0.5
+        )
+      ORDER BY GREATEST(
+        word_similarity(immutable_unaccent(${term}), immutable_unaccent(p.name)),
+        word_similarity(immutable_unaccent(${term}), immutable_unaccent(coalesce(p.description, ''))) * 0.8,
+        word_similarity(immutable_unaccent(${term}), immutable_unaccent(coalesce(b.name, '')))
+      ) DESC
+    `;
+
+    const orderedIds = matches.map((m) => m.id);
+    if (orderedIds.length === 0) {
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
+
+    const products = await this.prisma.product.findMany({
+      where: { ...baseWhere, id: { in: orderedIds } },
+      include: { variants: { select: { stockQuantity: true, color: true } } },
+    });
+
+    // findMany({ id: { in } }) không giữ thứ tự -> sắp lại theo điểm similarity
+    // đã tính ở query raw phía trên.
+    const rank = new Map(orderedIds.map((id, index) => [id, index]));
+    const sorted = [...products].sort(
+      (a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0),
+    );
+
+    const total = sorted.length;
+    const paged = sorted.slice((page - 1) * limit, page * limit);
+
+    return {
+      data: paged.map(toListItem),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async autocomplete(term?: string) {
+    const q = term?.trim() ?? '';
+    if (q.length < 2) return [];
+
+    const results = await this.prisma.$queryRaw<
+      {
+        id: string;
+        name: string;
+        slug: string;
+        thumbnail: string | null;
+        basePrice: number;
+        salePrice: number | null;
+      }[]
+    >`
+      SELECT p.id, p.name, p.slug, p.thumbnail,
+        p."basePrice"::float8 AS "basePrice",
+        p."salePrice"::float8 AS "salePrice"
+      FROM products p
+      LEFT JOIN brands b ON b.id = p."brandId"
+      WHERE p.status = ${ProductStatus.ACTIVE}
+        AND (
+          immutable_unaccent(p.name) ILIKE immutable_unaccent(${'%' + q + '%'})
+          OR word_similarity(immutable_unaccent(${q}), immutable_unaccent(p.name)) > 0.5
+          OR word_similarity(immutable_unaccent(${q}), immutable_unaccent(coalesce(b.name, ''))) > 0.5
+        )
+      ORDER BY
+        (immutable_unaccent(p.name) ILIKE immutable_unaccent(${q + '%'})) DESC,
+        word_similarity(immutable_unaccent(${q}), immutable_unaccent(p.name)) DESC
+      LIMIT ${AUTOCOMPLETE_LIMIT}
+    `;
+
+    return results;
   }
 
   async findBySlug(slug: string) {
