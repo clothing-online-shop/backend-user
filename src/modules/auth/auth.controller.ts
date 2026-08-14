@@ -14,6 +14,9 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
+import { LogoutDto } from './dto/logout.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from './strategies/jwt.strategy';
@@ -29,11 +32,39 @@ export class AuthController {
     return this.authService.register(dto);
   }
 
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Xác thực mã OTP 6 số gửi qua email khi đăng ký',
+  })
+  verifyOtp(@Body() dto: VerifyOtpDto) {
+    return this.authService.verifyOtp(dto.email, dto.code);
+  }
+
+  @Post('resend-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Gửi lại mã OTP (giới hạn 60 giây/lần)' })
+  resendOtp(@Body() dto: ResendOtpDto) {
+    return this.authService.resendOtp(dto.email);
+  }
+
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Đăng nhập, trả về access/refresh token' })
+  @ApiOperation({
+    summary: 'Đăng nhập bằng email hoặc SĐT, trả về access/refresh token',
+  })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Thu hồi refresh token hiện tại' })
+  async logout(@Body() dto: LogoutDto) {
+    await this.authService.logout(dto.refreshToken);
+    return { message: 'Đã đăng xuất' };
   }
 
   @Post('refresh')
