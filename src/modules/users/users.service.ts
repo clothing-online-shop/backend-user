@@ -18,6 +18,19 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { email } });
   }
 
+  findByPhone(phone: string): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { phone } });
+  }
+
+  // Đăng nhập chấp nhận cả email lẫn SĐT — thử email trước (định dạng rõ ràng hơn để
+  // phân biệt), không thấy mới thử theo SĐT.
+  async findByEmailOrPhone(identifier: string): Promise<User | null> {
+    return (
+      (await this.findByEmail(identifier)) ??
+      (await this.findByPhone(identifier))
+    );
+  }
+
   findById(id: string): Promise<User | null> {
     return this.prisma.user.findUnique({ where: { id } });
   }
@@ -38,6 +51,13 @@ export class UsersService {
     return this.prisma.user.update({
       where: { id: userId },
       data: { password: passwordHash },
+    });
+  }
+
+  markEmailVerified(userId: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { emailVerifiedAt: new Date() },
     });
   }
 }
