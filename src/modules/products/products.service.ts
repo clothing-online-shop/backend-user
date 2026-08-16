@@ -180,6 +180,32 @@ export class ProductsService {
     return results;
   }
 
+  // Không persist — "so sánh" là thao tác tức thời, FE tự quản lý danh sách đang so sánh
+  // (giống cách giỏ hàng khách quản lý localStorage), BE chỉ trả dữ liệu khi FE gửi id lên.
+  async compare(productIds: string[]) {
+    const products = await this.prisma.product.findMany({
+      where: {
+        id: { in: productIds },
+        status: ProductStatus.ACTIVE,
+      },
+      include: { variants: true },
+    });
+
+    // Giữ đúng thứ tự FE gửi lên — findMany({ id: { in } }) không đảm bảo thứ tự.
+    const rank = new Map(productIds.map((id, index) => [id, index]));
+    const sorted = [...products].sort(
+      (a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0),
+    );
+
+    return sorted.map((product) => ({
+      ...toListItem(product),
+      description: product.description,
+      material: product.material,
+      careInstructions: product.careInstructions,
+      variants: product.variants.map(toVariantDto),
+    }));
+  }
+
   async findBySlug(slug: string) {
     const product = await this.prisma.product.findUnique({
       where: { slug },
