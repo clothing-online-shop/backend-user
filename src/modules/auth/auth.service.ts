@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
-import { User } from '@prisma/client';
+import { User, UserStatus } from '@prisma/client';
 import type Redis from 'ioredis';
 import { PrismaService } from '../../config/prisma.service';
 import { REDIS_CLIENT } from '../../config/redis.module';
@@ -124,6 +124,13 @@ export class AuthService {
       throw new UnauthorizedException('Email/SĐT hoặc mật khẩu không đúng');
     }
 
+    // Không dùng message riêng ("tài khoản đã bị khóa") — tránh lộ thông tin tài khoản
+    // này có tồn tại/bị khóa hay không cho người không biết mật khẩu, khớp nguyên tắc
+    // chống dò tài khoản đang áp dụng cho forgot-password.
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('Email/SĐT hoặc mật khẩu không đúng');
+    }
+
     const passwordMatches = await argon2.verify(user.password, dto.password);
     if (!passwordMatches) {
       await this.recordLoginFailure(identifier);
@@ -203,6 +210,11 @@ export class AuthService {
     const user = await this.usersService.findById(payload.sub);
     if (!user) {
       throw new UnauthorizedException('Người dùng không tồn tại');
+    }
+    // Tài khoản bị khóa sau khi đã có refresh token còn hạn — chặn ở đây để lệnh khóa của
+    // admin có tác dụng ngay, không phải đợi refresh token cũ (tối đa 7 ngày) hết hạn.
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('Tài khoản đã bị khóa hoặc vô hiệu hóa');
     }
 
     await this.prisma.refreshToken.update({

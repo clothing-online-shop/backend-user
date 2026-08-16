@@ -10,6 +10,8 @@ import { UsersModule } from './modules/users/users.module';
 import { ProductsModule } from './modules/products/products.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CartModule } from './modules/cart/cart.module';
+import { WishlistModule } from './modules/wishlist/wishlist.module';
+import { RecentlyViewedModule } from './modules/recently-viewed/recently-viewed.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 
@@ -32,6 +34,8 @@ import { PaymentsModule } from './modules/payments/payments.module';
     ProductsModule,
     CategoriesModule,
     CartModule,
+    WishlistModule,
+    RecentlyViewedModule,
     OrdersModule,
     PaymentsModule,
   ],

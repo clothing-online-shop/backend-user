@@ -1,8 +1,9 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
 import { ListProductsQueryDto } from './dto/list-products-query.dto';
 import { AutocompleteQueryDto } from './dto/autocomplete-query.dto';
+import { CompareProductsDto } from './dto/compare-products.dto';
 
 @ApiTags('products')
 @Controller('products')
@@ -58,6 +59,14 @@ export class ProductsController {
   @ApiQuery({ name: 'q', required: false })
   autocomplete(@Query() query: AutocompleteQueryDto) {
     return this.productsService.autocomplete(query.q);
+  }
+
+  @Post('compare')
+  @ApiOperation({
+    summary: 'So sánh 2-4 sản phẩm (báo lỗi 400 nếu vượt quá 4)',
+  })
+  compare(@Body() dto: CompareProductsDto) {
+    return this.productsService.compare(dto.productIds);
   }
 
   @Get(':slug')
