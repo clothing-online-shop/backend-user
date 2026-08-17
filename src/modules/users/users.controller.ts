@@ -57,12 +57,19 @@ export class UsersController {
 
   @Post('email/request-change')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Gửi OTP xác thực tới email mới trước khi đổi' })
+  @ApiOperation({
+    summary:
+      'Gửi OTP xác thực tới email mới trước khi đổi (yêu cầu mật khẩu hiện tại)',
+  })
   requestEmailChange(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: RequestEmailChangeDto,
   ) {
-    return this.usersService.requestEmailChange(user.id, dto.newEmail);
+    return this.usersService.requestEmailChange(
+      user.id,
+      dto.newEmail,
+      dto.currentPassword,
+    );
   }
 
   @Post('email/confirm-change')
@@ -83,13 +90,17 @@ export class UsersController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Gửi OTP xác thực đổi SĐT (gửi tới email hiện tại — chưa có hạ tầng SMS)',
+      'Gửi OTP xác thực đổi SĐT (gửi tới email hiện tại — chưa có hạ tầng SMS; yêu cầu mật khẩu hiện tại)',
   })
   requestPhoneChange(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: RequestPhoneChangeDto,
   ) {
-    return this.usersService.requestPhoneChange(user.id, dto.newPhone);
+    return this.usersService.requestPhoneChange(
+      user.id,
+      dto.newPhone,
+      dto.currentPassword,
+    );
   }
 
   @Post('phone/confirm-change')

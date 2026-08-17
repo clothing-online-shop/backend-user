@@ -102,11 +102,7 @@ export class UsersService {
     dto: ChangePasswordDto,
   ): Promise<{ message: string }> {
     const user = await this.findExisting(userId);
-
-    const matches = await argon2.verify(user.password, dto.currentPassword);
-    if (!matches) {
-      throw new BadRequestException('Mật khẩu hiện tại không đúng.');
-    }
+    await this.verifyCurrentPassword(user, dto.currentPassword);
 
     const passwordHash = await argon2.hash(dto.newPassword);
     await this.updatePassword(userId, passwordHash);
@@ -124,10 +120,13 @@ export class UsersService {
   async requestEmailChange(
     userId: string,
     newEmail: string,
+    currentPassword: string,
   ): Promise<{ message: string }> {
     const user = await this.findExisting(userId);
+    await this.verifyCurrentPassword(user, currentPassword);
+
     const normalizedEmail = newEmail.trim().toLowerCase();
-    if (normalizedEmail === user.email) {
+    if (normalizedEmail === user.email.toLowerCase()) {
       throw new BadRequestException('Email mới trùng với email hiện tại.');
     }
     if (await this.findByEmail(normalizedEmail)) {
@@ -165,8 +164,11 @@ export class UsersService {
   async requestPhoneChange(
     userId: string,
     newPhone: string,
+    currentPassword: string,
   ): Promise<{ message: string }> {
     const user = await this.findExisting(userId);
+    await this.verifyCurrentPassword(user, currentPassword);
+
     if (newPhone === user.phone) {
       throw new BadRequestException('Số điện thoại mới trùng với số hiện tại.');
     }
@@ -200,6 +202,16 @@ export class UsersService {
       return this.toProfileResponse(updated);
     } catch (err) {
       throw this.asConflictIfDuplicate(err, 'Số điện thoại đã được sử dụng.');
+    }
+  }
+
+  private async verifyCurrentPassword(
+    user: User,
+    currentPassword: string,
+  ): Promise<void> {
+    const matches = await argon2.verify(user.password, currentPassword);
+    if (!matches) {
+      throw new BadRequestException('Mật khẩu hiện tại không đúng.');
     }
   }
 
