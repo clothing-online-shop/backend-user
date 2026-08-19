@@ -275,8 +275,14 @@ const cartInclude = {
 // không đổi status — xem products.service.ts) vẫn còn status ACTIVE, nên vẫn lọt qua các
 // check "!== ProductStatus.ACTIVE" cũ, để khách thêm/giữ được trong giỏ 1 sản phẩm đã biến
 // mất khỏi catalog.
-function isProductAvailable(product: Pick<Product, 'status' | 'isDelete'>): boolean {
-  return product.status === ProductStatus.ACTIVE && !product.isDelete;
+function isProductAvailable(
+  product: Pick<Product, 'status' | 'isDelete'>,
+): boolean {
+  // Product.status là Int thô ở tầng Prisma (không phải enum DB) — gán qua biến khai kiểu
+  // ProductStatus trước khi so sánh, khớp pattern đã dùng ở chỗ khác trong repo, để không
+  // dính lint no-unsafe-enum-comparison (so number thô với enum TS).
+  const status: ProductStatus = product.status;
+  return status === ProductStatus.ACTIVE && !product.isDelete;
 }
 
 // Logic quyết định tồn kho dùng chung giữa mergeCart (số lượng mong muốn = đã có + thêm
