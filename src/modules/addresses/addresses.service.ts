@@ -78,7 +78,11 @@ export class AddressesService {
     const provinceId = dto.provinceId ?? existing.provinceId;
     const districtId = dto.districtId ?? existing.districtId;
     const wardId = dto.wardId ?? existing.wardId;
-    if (dto.provinceId || dto.districtId || dto.wardId) {
+    if (
+      dto.provinceId !== undefined ||
+      dto.districtId !== undefined ||
+      dto.wardId !== undefined
+    ) {
       await this.validateLocationChain(provinceId, districtId, wardId);
     }
 
