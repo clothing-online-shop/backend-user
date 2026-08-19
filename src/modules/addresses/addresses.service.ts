@@ -31,6 +31,8 @@ export class AddressesService {
 
   createAddress(userId: string, dto: CreateAddressDto): Promise<Address> {
     return this.runSerializable(async (tx) => {
+      await this.validateLocationChain(dto.provinceId, dto.districtId, dto.wardId);
+
       const count = await tx.address.count({ where: { userId } });
       if (count >= this.MAX_ADDRESSES_PER_USER) {
         throw new BadRequestException(
@@ -56,9 +58,9 @@ export class AddressesService {
           userId,
           receiverName: dto.receiverName,
           phone: dto.phone,
-          province: dto.province,
-          district: dto.district,
-          ward: dto.ward,
+          provinceId: dto.provinceId,
+          districtId: dto.districtId,
+          wardId: dto.wardId,
           detail: dto.detail,
           isDefault,
         },
@@ -71,15 +73,23 @@ export class AddressesService {
     addressId: string,
     dto: UpdateAddressDto,
   ): Promise<Address> {
-    await this.findOwned(this.prisma, userId, addressId);
+    const existing = await this.findOwned(this.prisma, userId, addressId);
+
+    const provinceId = dto.provinceId ?? existing.provinceId;
+    const districtId = dto.districtId ?? existing.districtId;
+    const wardId = dto.wardId ?? existing.wardId;
+    if (dto.provinceId || dto.districtId || dto.wardId) {
+      await this.validateLocationChain(provinceId, districtId, wardId);
+    }
+
     return this.prisma.address.update({
       where: { id: addressId },
       data: {
         receiverName: dto.receiverName,
         phone: dto.phone,
-        province: dto.province,
-        district: dto.district,
-        ward: dto.ward,
+        provinceId,
+        districtId,
+        wardId,
         detail: dto.detail,
       },
     });
@@ -128,6 +138,32 @@ export class AddressesService {
         });
       }
     });
+  }
+
+  // Xác nhận districtId thuộc đúng provinceId và wardId thuộc đúng districtId. Không cần
+  // check riêng provinceId tồn tại — nếu district tồn tại và district.provinceId khớp thì
+  // provinceId chắc chắn hợp lệ (FK ràng buộc District.province luôn trỏ tới 1 Province có
+  // thật), tránh 1 query thừa.
+  private async validateLocationChain(
+    provinceId: string,
+    districtId: string,
+    wardId: string,
+  ): Promise<void> {
+    const district = await this.prisma.district.findUnique({
+      where: { id: districtId },
+    });
+    if (!district || district.provinceId !== provinceId) {
+      throw new BadRequestException(
+        'Quận/huyện không hợp lệ hoặc không thuộc tỉnh/thành phố đã chọn.',
+      );
+    }
+
+    const ward = await this.prisma.ward.findUnique({ where: { id: wardId } });
+    if (!ward || ward.districtId !== districtId) {
+      throw new BadRequestException(
+        'Phường/xã không hợp lệ hoặc không thuộc quận/huyện đã chọn.',
+      );
+    }
   }
 
   // Kết hợp "tìm" và "có phải của mình không" thành 1 lỗi 404 duy nhất — không xác nhận sự
