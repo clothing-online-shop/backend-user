@@ -15,6 +15,7 @@ import { RecentlyViewedModule } from './modules/recently-viewed/recently-viewed.
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
+import { LocationsModule } from './modules/locations/locations.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { AddressesModule } from './modules/addresses/addresses.module';
     OrdersModule,
     PaymentsModule,
     AddressesModule,
+    LocationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
