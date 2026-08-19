@@ -97,8 +97,7 @@ export class CartService {
         include: { product: true },
       });
 
-      const status: ProductStatus | undefined = variant?.product.status;
-      if (!variant || status !== ProductStatus.ACTIVE) {
+      if (!variant || !isProductAvailable(variant.product)) {
         adjustments.push({
           productVariantId: item.productVariantId,
           requestedQuantity: item.quantity,
@@ -168,8 +167,7 @@ export class CartService {
     const adjustments: MergeAdjustment[] = [];
 
     for (const item of cart?.items ?? []) {
-      const status: ProductStatus = item.productVariant.product.status;
-      if (status !== ProductStatus.ACTIVE) {
+      if (!isProductAvailable(item.productVariant.product)) {
         // deleteMany (không phải delete) — không throw nếu dòng đã bị request khác xóa/sửa
         // trước đó (2 tab, double-click). Chỉ báo adjustment khi chính request này thật sự
         // xóa được dòng (count > 0) — tránh báo sai cho khách 1 thay đổi mà mình không phải
@@ -243,8 +241,7 @@ export class CartService {
     if (!variant) {
       throw new NotFoundException('Không tìm thấy sản phẩm');
     }
-    const status: ProductStatus = variant.product.status;
-    if (status !== ProductStatus.ACTIVE) {
+    if (!isProductAvailable(variant.product)) {
       throw new BadRequestException('Sản phẩm hiện không khả dụng.');
     }
     return variant;
@@ -271,6 +268,22 @@ export class CartService {
 const cartInclude = {
   items: { include: { productVariant: { include: { product: true } } } },
 } as const;
+
+// Dùng chung cho addItem/mergeCart/validateCart — "khả dụng để mua" phải xét cả 2 điều
+// kiện: status ACTIVE VÀ chưa bị xóa mềm. Trước đây chỉ check status, bỏ sót isDelete: sản
+// phẩm bị admin xóa mềm bên backend-cms (ProductsService.remove() chỉ set isDelete: true,
+// không đổi status — xem products.service.ts) vẫn còn status ACTIVE, nên vẫn lọt qua các
+// check "!== ProductStatus.ACTIVE" cũ, để khách thêm/giữ được trong giỏ 1 sản phẩm đã biến
+// mất khỏi catalog.
+function isProductAvailable(
+  product: Pick<Product, 'status' | 'isDelete'>,
+): boolean {
+  // Product.status là Int thô ở tầng Prisma (không phải enum DB) — gán qua biến khai kiểu
+  // ProductStatus trước khi so sánh, khớp pattern đã dùng ở chỗ khác trong repo, để không
+  // dính lint no-unsafe-enum-comparison (so number thô với enum TS).
+  const status: ProductStatus = product.status;
+  return status === ProductStatus.ACTIVE && !product.isDelete;
+}
 
 // Logic quyết định tồn kho dùng chung giữa mergeCart (số lượng mong muốn = đã có + thêm
 // vào) và validateCart (số lượng mong muốn = đang có sẵn trong giỏ) — tránh 2 công thức
