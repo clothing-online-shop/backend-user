@@ -65,4 +65,13 @@ export class CartController {
   mergeCart(@CurrentUser() user: AuthenticatedUser, @Body() dto: MergeCartDto) {
     return this.cartService.mergeCart(user.id, dto);
   }
+
+  @Post('validate')
+  @ApiOperation({
+    summary:
+      'Rà soát tồn kho/tình trạng bán của giỏ hàng hiện tại trước khi checkout — tự xóa dòng hết hàng/ngừng bán, hạ số lượng dòng không đủ hàng',
+  })
+  validateCart(@CurrentUser() user: AuthenticatedUser) {
+    return this.cartService.validateCart(user.id);
+  }
 }

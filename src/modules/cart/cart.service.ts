@@ -152,6 +152,62 @@ export class CartService {
     return { cart: await this.findMyCart(userId), adjustments };
   }
 
+  // Rà soát toàn bộ giỏ hàng theo tồn kho/tình trạng bán HIỆN TẠI — dùng ngay trước khi
+  // vào bước checkout. Cùng logic quyết định với mergeCart (status trước, tồn kho sau)
+  // nhưng áp dụng cho các dòng ĐÃ CÓ trong giỏ, không phải danh sách merge vào.
+  async validateCart(userId: string) {
+    const cart = await this.prisma.cart.findFirst({
+      where: { userId },
+      include: cartInclude,
+    });
+    if (!cart) {
+      return { cart: { id: null, items: [], subtotal: 0 }, adjustments: [] };
+    }
+
+    const adjustments: MergeAdjustment[] = [];
+
+    for (const item of cart.items) {
+      const status: ProductStatus = item.productVariant.product.status;
+      if (status !== ProductStatus.ACTIVE) {
+        adjustments.push({
+          productVariantId: item.productVariantId,
+          requestedQuantity: item.quantity,
+          finalQuantity: 0,
+          reason: 'unavailable',
+        });
+        await this.prisma.cartItem.delete({ where: { id: item.id } });
+        continue;
+      }
+
+      const stockQuantity = item.productVariant.stockQuantity;
+      if (stockQuantity === 0) {
+        adjustments.push({
+          productVariantId: item.productVariantId,
+          requestedQuantity: item.quantity,
+          finalQuantity: 0,
+          reason: 'out_of_stock',
+        });
+        await this.prisma.cartItem.delete({ where: { id: item.id } });
+        continue;
+      }
+
+      if (stockQuantity < item.quantity) {
+        adjustments.push({
+          productVariantId: item.productVariantId,
+          requestedQuantity: item.quantity,
+          finalQuantity: stockQuantity,
+          reason: 'capped',
+        });
+        await this.prisma.cartItem.update({
+          where: { id: item.id },
+          data: { quantity: stockQuantity },
+        });
+      }
+    }
+
+    return { cart: await this.findMyCart(userId), adjustments };
+  }
+
   private async getOrCreateCart(userId: string): Promise<Cart> {
     const existing = await this.prisma.cart.findFirst({ where: { userId } });
     if (existing) return existing;
