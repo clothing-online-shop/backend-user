@@ -64,7 +64,7 @@ describe('ShippingService.getFeeQuote', () => {
     } = createMocks();
     addressFindUnique.mockResolvedValue(baseAddress);
     cartFindFirst.mockResolvedValue(cartWithItems(300));
-    post.mockImplementation((path: string) => {
+    post.mockImplementation((path: string, body?: unknown) => {
       if (path === '/v2/shipping-order/available-services') {
         return Promise.resolve([
           { service_id: 1, service_type_id: 2, short_name: 'Nhanh' },
@@ -72,7 +72,14 @@ describe('ShippingService.getFeeQuote', () => {
         ]);
       }
       if (path === '/v2/shipping-order/fee') {
-        return Promise.resolve({ total: 30000 });
+        const bodyObj = body as Record<string, unknown>;
+        if (bodyObj.service_id === 1) {
+          return Promise.resolve({ total: 30000 });
+        }
+        if (bodyObj.service_id === 2) {
+          return Promise.resolve({ total: 25000 });
+        }
+        throw new Error(`unexpected service_id ${String(bodyObj.service_id)}`);
       }
       if (path === '/v2/shipping-order/leadtime') {
         return Promise.resolve({ leadtime: 1750000000 });
@@ -84,7 +91,10 @@ describe('ShippingService.getFeeQuote', () => {
     const result = await service.getFeeQuote('user-1', 'addr-1');
 
     expect(result).toHaveLength(2);
-    expect(result[0].fee).toBe(30000);
+    expect(result[0].fee).toBe(25000);
+    expect(result[0].serviceId).toBe(2);
+    expect(result[1].fee).toBe(30000);
+    expect(result[1].serviceId).toBe(1);
     expect(result[0].expectedDeliveryTime).toBe(
       new Date(1750000000 * 1000).toISOString(),
     );
