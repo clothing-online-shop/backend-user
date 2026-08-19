@@ -160,13 +160,10 @@ export class CartService {
       where: { userId },
       include: cartInclude,
     });
-    if (!cart) {
-      return { cart: { id: null, items: [], subtotal: 0 }, adjustments: [] };
-    }
 
     const adjustments: MergeAdjustment[] = [];
 
-    for (const item of cart.items) {
+    for (const item of cart?.items ?? []) {
       const status: ProductStatus = item.productVariant.product.status;
       if (status !== ProductStatus.ACTIVE) {
         adjustments.push({
@@ -175,19 +172,19 @@ export class CartService {
           finalQuantity: 0,
           reason: 'unavailable',
         });
-        await this.prisma.cartItem.delete({ where: { id: item.id } });
+        await this.prisma.cartItem.deleteMany({ where: { id: item.id } });
         continue;
       }
 
       const stockQuantity = item.productVariant.stockQuantity;
-      if (stockQuantity === 0) {
+      if (stockQuantity <= 0) {
         adjustments.push({
           productVariantId: item.productVariantId,
           requestedQuantity: item.quantity,
           finalQuantity: 0,
           reason: 'out_of_stock',
         });
-        await this.prisma.cartItem.delete({ where: { id: item.id } });
+        await this.prisma.cartItem.deleteMany({ where: { id: item.id } });
         continue;
       }
 
@@ -198,7 +195,7 @@ export class CartService {
           finalQuantity: stockQuantity,
           reason: 'capped',
         });
-        await this.prisma.cartItem.update({
+        await this.prisma.cartItem.updateMany({
           where: { id: item.id },
           data: { quantity: stockQuantity },
         });

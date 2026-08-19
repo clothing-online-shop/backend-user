@@ -4,14 +4,17 @@ import { ProductStatus } from '../products/product-status.enum';
 
 function createMocks() {
   const cartFindFirst = jest.fn();
-  const cartItemDelete = jest.fn();
-  const cartItemUpdate = jest.fn();
+  const cartItemDeleteMany = jest.fn();
+  const cartItemUpdateMany = jest.fn();
   const prisma = {
     cart: { findFirst: cartFindFirst },
-    cartItem: { delete: cartItemDelete, update: cartItemUpdate },
+    cartItem: {
+      deleteMany: cartItemDeleteMany,
+      updateMany: cartItemUpdateMany,
+    },
   } as unknown as PrismaService;
 
-  return { prisma, cartFindFirst, cartItemDelete, cartItemUpdate };
+  return { prisma, cartFindFirst, cartItemDeleteMany, cartItemUpdateMany };
 }
 
 function cartItem(overrides: {
@@ -58,7 +61,7 @@ describe('CartService.validateCart', () => {
   });
 
   it('xóa dòng có sản phẩm ngừng bán (reason unavailable)', async () => {
-    const { prisma, cartFindFirst, cartItemDelete } = createMocks();
+    const { prisma, cartFindFirst, cartItemDeleteMany } = createMocks();
     const item = cartItem({
       id: 'item-1',
       productVariantId: 'variant-1',
@@ -73,7 +76,9 @@ describe('CartService.validateCart', () => {
 
     const result = await service.validateCart('user-1');
 
-    expect(cartItemDelete).toHaveBeenCalledWith({ where: { id: 'item-1' } });
+    expect(cartItemDeleteMany).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
+    });
     expect(result.adjustments).toEqual([
       {
         productVariantId: 'variant-1',
@@ -85,7 +90,7 @@ describe('CartService.validateCart', () => {
   });
 
   it('xóa dòng hết hàng hẳn (reason out_of_stock)', async () => {
-    const { prisma, cartFindFirst, cartItemDelete } = createMocks();
+    const { prisma, cartFindFirst, cartItemDeleteMany } = createMocks();
     const item = cartItem({
       id: 'item-1',
       productVariantId: 'variant-1',
@@ -99,7 +104,9 @@ describe('CartService.validateCart', () => {
 
     const result = await service.validateCart('user-1');
 
-    expect(cartItemDelete).toHaveBeenCalledWith({ where: { id: 'item-1' } });
+    expect(cartItemDeleteMany).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
+    });
     expect(result.adjustments).toEqual([
       {
         productVariantId: 'variant-1',
@@ -111,7 +118,7 @@ describe('CartService.validateCart', () => {
   });
 
   it('hạ số lượng dòng còn hàng nhưng không đủ (reason capped)', async () => {
-    const { prisma, cartFindFirst, cartItemUpdate } = createMocks();
+    const { prisma, cartFindFirst, cartItemUpdateMany } = createMocks();
     const item = cartItem({
       id: 'item-1',
       productVariantId: 'variant-1',
@@ -131,7 +138,7 @@ describe('CartService.validateCart', () => {
 
     const result = await service.validateCart('user-1');
 
-    expect(cartItemUpdate).toHaveBeenCalledWith({
+    expect(cartItemUpdateMany).toHaveBeenCalledWith({
       where: { id: 'item-1' },
       data: { quantity: 2 },
     });
@@ -147,7 +154,7 @@ describe('CartService.validateCart', () => {
   });
 
   it('giữ nguyên dòng còn đủ hàng, không có adjustment nào', async () => {
-    const { prisma, cartFindFirst, cartItemDelete, cartItemUpdate } =
+    const { prisma, cartFindFirst, cartItemDeleteMany, cartItemUpdateMany } =
       createMocks();
     const item = cartItem({
       id: 'item-1',
@@ -160,8 +167,120 @@ describe('CartService.validateCart', () => {
 
     const result = await service.validateCart('user-1');
 
-    expect(cartItemDelete).not.toHaveBeenCalled();
-    expect(cartItemUpdate).not.toHaveBeenCalled();
+    expect(cartItemDeleteMany).not.toHaveBeenCalled();
+    expect(cartItemUpdateMany).not.toHaveBeenCalled();
     expect(result.adjustments).toEqual([]);
+  });
+
+  it('xử lý đúng nhiều dòng trong 1 lần gọi: xóa 1, hạ số lượng 1, giữ nguyên 1', async () => {
+    const { prisma, cartFindFirst, cartItemDeleteMany, cartItemUpdateMany } =
+      createMocks();
+    const outOfStockItem = cartItem({
+      id: 'item-1',
+      productVariantId: 'variant-1',
+      quantity: 2,
+      stockQuantity: 0,
+    });
+    const cappedItem = cartItem({
+      id: 'item-2',
+      productVariantId: 'variant-2',
+      quantity: 5,
+      stockQuantity: 2,
+    });
+    const untouchedItem = cartItem({
+      id: 'item-3',
+      productVariantId: 'variant-3',
+      quantity: 1,
+      stockQuantity: 10,
+    });
+    cartFindFirst
+      .mockResolvedValueOnce({
+        id: 'cart-1',
+        items: [outOfStockItem, cappedItem, untouchedItem],
+      })
+      .mockResolvedValueOnce({
+        id: 'cart-1',
+        items: [
+          cartItem({
+            id: 'item-2',
+            productVariantId: 'variant-2',
+            quantity: 2,
+            stockQuantity: 2,
+          }),
+          untouchedItem,
+        ],
+      });
+    const service = new CartService(prisma);
+
+    const result = await service.validateCart('user-1');
+
+    expect(cartItemDeleteMany).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
+    });
+    expect(cartItemUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'item-2' },
+      data: { quantity: 2 },
+    });
+    expect(cartItemDeleteMany).not.toHaveBeenCalledWith({
+      where: { id: 'item-3' },
+    });
+    expect(cartItemUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'item-3' } }),
+    );
+    expect(result.adjustments).toEqual([
+      {
+        productVariantId: 'variant-1',
+        requestedQuantity: 2,
+        finalQuantity: 0,
+        reason: 'out_of_stock',
+      },
+      {
+        productVariantId: 'variant-2',
+        requestedQuantity: 5,
+        finalQuantity: 2,
+        reason: 'capped',
+      },
+    ]);
+  });
+
+  it('sản phẩm vừa ngừng bán vừa hết hàng thì ưu tiên reason unavailable (status check trước stock check)', async () => {
+    const { prisma, cartFindFirst, cartItemDeleteMany } = createMocks();
+    const item = cartItem({
+      id: 'item-1',
+      productVariantId: 'variant-1',
+      quantity: 2,
+      stockQuantity: 0,
+      status: ProductStatus.INACTIVE,
+    });
+    cartFindFirst
+      .mockResolvedValueOnce({ id: 'cart-1', items: [item] })
+      .mockResolvedValueOnce({ id: 'cart-1', items: [] });
+    const service = new CartService(prisma);
+
+    const result = await service.validateCart('user-1');
+
+    expect(cartItemDeleteMany).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
+    });
+    expect(result.adjustments).toEqual([
+      {
+        productVariantId: 'variant-1',
+        requestedQuantity: 2,
+        finalQuantity: 0,
+        reason: 'unavailable',
+      },
+    ]);
+  });
+
+  it('chỉ rà soát giỏ hàng thuộc về user gọi request (scoping theo userId)', async () => {
+    const { prisma, cartFindFirst } = createMocks();
+    cartFindFirst.mockResolvedValue(null);
+    const service = new CartService(prisma);
+
+    await service.validateCart('user-1');
+
+    expect(cartFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'user-1' } }),
+    );
   });
 });
