@@ -31,7 +31,11 @@ export class AddressesService {
 
   createAddress(userId: string, dto: CreateAddressDto): Promise<Address> {
     return this.runSerializable(async (tx) => {
-      await this.validateLocationChain(dto.provinceId, dto.districtId, dto.wardId);
+      await this.validateLocationChain(
+        dto.provinceId,
+        dto.districtId,
+        dto.wardId,
+      );
 
       const count = await tx.address.count({ where: { userId } });
       if (count >= this.MAX_ADDRESSES_PER_USER) {
