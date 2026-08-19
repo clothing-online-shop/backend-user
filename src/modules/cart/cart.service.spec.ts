@@ -4,8 +4,10 @@ import { ProductStatus } from '../products/product-status.enum';
 
 function createMocks() {
   const cartFindFirst = jest.fn();
-  const cartItemDeleteMany = jest.fn();
-  const cartItemUpdateMany = jest.fn();
+  // Mặc định trả về count: 1 (dòng thật sự bị ảnh hưởng) — test riêng cho trường hợp
+  // count: 0 (dòng đã bị request khác xóa/sửa trước đó) tự override lại.
+  const cartItemDeleteMany = jest.fn().mockResolvedValue({ count: 1 });
+  const cartItemUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
   const prisma = {
     cart: { findFirst: cartFindFirst },
     cartItem: {
@@ -270,6 +272,43 @@ describe('CartService.validateCart', () => {
         reason: 'unavailable',
       },
     ]);
+  });
+
+  it('không báo adjustment nếu dòng đã bị request khác xóa/sửa trước đó (count 0)', async () => {
+    const { prisma, cartFindFirst, cartItemDeleteMany, cartItemUpdateMany } =
+      createMocks();
+    // Giả lập race: request khác đã xóa/sửa dòng này trước khi request hiện tại kịp ghi,
+    // nên deleteMany/updateMany không ảnh hưởng dòng nào (count: 0).
+    cartItemDeleteMany.mockResolvedValue({ count: 0 });
+    cartItemUpdateMany.mockResolvedValue({ count: 0 });
+    const outOfStockItem = cartItem({
+      id: 'item-1',
+      productVariantId: 'variant-1',
+      quantity: 2,
+      stockQuantity: 0,
+    });
+    const cappedItem = cartItem({
+      id: 'item-2',
+      productVariantId: 'variant-2',
+      quantity: 5,
+      stockQuantity: 2,
+    });
+    cartFindFirst.mockResolvedValue({
+      id: 'cart-1',
+      items: [outOfStockItem, cappedItem],
+    });
+    const service = new CartService(prisma);
+
+    const result = await service.validateCart('user-1');
+
+    expect(cartItemDeleteMany).toHaveBeenCalledWith({
+      where: { id: 'item-1' },
+    });
+    expect(cartItemUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'item-2' },
+      data: { quantity: 2 },
+    });
+    expect(result.adjustments).toEqual([]);
   });
 
   it('chỉ rà soát giỏ hàng thuộc về user gọi request (scoping theo userId)', async () => {
