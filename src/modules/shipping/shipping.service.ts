@@ -1,6 +1,9 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
+  InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -31,6 +34,8 @@ export interface ShippingFeeOption {
 
 @Injectable()
 export class ShippingService {
+  private readonly logger = new Logger(ShippingService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ghnClient: GhnClient,
@@ -85,51 +90,76 @@ export class ShippingService {
     const toDistrictId = address.district.ghnId;
     const toWardCode = address.ward.ghnCode;
 
-    const services = await this.ghnClient.post<GhnAvailableService[]>(
-      '/v2/shipping-order/available-services',
-      {
-        shop_id: Number(this.config.get<string>('GHN_SHOP_ID', '0')),
-        from_district: fromDistrictId,
-        to_district: toDistrictId,
-      },
-    );
+    try {
+      const services = await this.ghnClient.post<GhnAvailableService[]>(
+        '/v2/shipping-order/available-services',
+        {
+          shop_id: Number(this.config.get<string>('GHN_SHOP_ID', '0')),
+          from_district: fromDistrictId,
+          to_district: toDistrictId,
+        },
+      );
 
-    const options = await Promise.all(
-      services.map(async (service) => {
-        const [feeResult, leadtimeResult] = await Promise.all([
-          this.ghnClient.post<GhnFeeResponse>('/v2/shipping-order/fee', {
-            service_id: service.service_id,
-            service_type_id: service.service_type_id,
-            from_district_id: fromDistrictId,
-            from_ward_code: fromWardCode,
-            to_district_id: toDistrictId,
-            to_ward_code: toWardCode,
-            weight: totalWeight,
-          }),
-          this.ghnClient.post<GhnLeadtimeResponse>(
-            '/v2/shipping-order/leadtime',
-            {
+      if (!Array.isArray(services)) {
+        this.logger.error(
+          `GHN available-services trả về dữ liệu không hợp lệ (không phải mảng): ${JSON.stringify(
+            services,
+          )}`,
+        );
+        throw new InternalServerErrorException(
+          'Không tính được phí ship, vui lòng thử lại.',
+        );
+      }
+
+      const options = await Promise.all(
+        services.map(async (service) => {
+          const [feeResult, leadtimeResult] = await Promise.all([
+            this.ghnClient.post<GhnFeeResponse>('/v2/shipping-order/fee', {
+              service_id: service.service_id,
+              service_type_id: service.service_type_id,
               from_district_id: fromDistrictId,
               from_ward_code: fromWardCode,
               to_district_id: toDistrictId,
               to_ward_code: toWardCode,
-              service_id: service.service_id,
-            },
-          ),
-        ]);
+              weight: totalWeight,
+            }),
+            this.ghnClient.post<GhnLeadtimeResponse>(
+              '/v2/shipping-order/leadtime',
+              {
+                from_district_id: fromDistrictId,
+                from_ward_code: fromWardCode,
+                to_district_id: toDistrictId,
+                to_ward_code: toWardCode,
+                service_id: service.service_id,
+              },
+            ),
+          ]);
 
-        return {
-          serviceId: service.service_id,
-          serviceTypeId: service.service_type_id,
-          name: service.short_name,
-          fee: feeResult.total,
-          expectedDeliveryTime: new Date(
-            leadtimeResult.leadtime * 1000,
-          ).toISOString(),
-        };
-      }),
-    );
+          return {
+            serviceId: service.service_id,
+            serviceTypeId: service.service_type_id,
+            name: service.short_name,
+            fee: feeResult.total,
+            expectedDeliveryTime: new Date(
+              leadtimeResult.leadtime * 1000,
+            ).toISOString(),
+          };
+        }),
+      );
 
-    return options.sort((a, b) => a.fee - b.fee);
+      return options.sort((a, b) => a.fee - b.fee);
+    } catch (err) {
+      if (err instanceof HttpException) {
+        throw err;
+      }
+      this.logger.error(
+        `Lỗi không xác định khi tính phí ship qua GHN: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      throw new InternalServerErrorException(
+        'Không tính được phí ship, vui lòng thử lại.',
+      );
+    }
   }
 }

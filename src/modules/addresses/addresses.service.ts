@@ -8,6 +8,18 @@ import { PrismaService } from '../../config/prisma.service';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
 
+// Address chỉ lưu provinceId/districtId/wardId (cuid) — include thêm tên tỉnh/huyện/xã để
+// mọi response trả về client đều có tên đọc được, không phải id trần.
+const addressLocationInclude = {
+  province: { select: { id: true, name: true } },
+  district: { select: { id: true, name: true } },
+  ward: { select: { id: true, name: true } },
+} as const;
+
+type AddressWithLocation = Prisma.AddressGetPayload<{
+  include: typeof addressLocationInclude;
+}>;
+
 @Injectable()
 export class AddressesService {
   // Giới hạn số địa chỉ lưu/tài khoản — tránh sổ địa chỉ phình vô hạn (Shopee/Lazada cũng
@@ -22,21 +34,29 @@ export class AddressesService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  findMyAddresses(userId: string): Promise<Address[]> {
+  findMyAddresses(userId: string): Promise<AddressWithLocation[]> {
     return this.prisma.address.findMany({
       where: { userId },
       orderBy: [{ isDefault: 'desc' }, { id: 'desc' }],
+      include: addressLocationInclude,
     });
   }
 
-  createAddress(userId: string, dto: CreateAddressDto): Promise<Address> {
-    return this.runSerializable(async (tx) => {
-      await this.validateLocationChain(
-        dto.provinceId,
-        dto.districtId,
-        dto.wardId,
-      );
+  async createAddress(
+    userId: string,
+    dto: CreateAddressDto,
+  ): Promise<AddressWithLocation> {
+    // provinces/districts/wards là dữ liệu tham chiếu tĩnh, không tham gia bất biến mà
+    // transaction Serializable bên dưới bảo vệ (đếm số địa chỉ/cờ mặc định) — validate
+    // trước, ngoài transaction, để không giữ 2 connection cùng lúc (1 cho transaction
+    // interactive, 1 cho query validate) và tránh nguy cơ cạn pool/tự deadlock khi tải cao.
+    await this.validateLocationChain(
+      dto.provinceId,
+      dto.districtId,
+      dto.wardId,
+    );
 
+    return this.runSerializable(async (tx) => {
       const count = await tx.address.count({ where: { userId } });
       if (count >= this.MAX_ADDRESSES_PER_USER) {
         throw new BadRequestException(
@@ -68,6 +88,7 @@ export class AddressesService {
           detail: dto.detail,
           isDefault,
         },
+        include: addressLocationInclude,
       });
     });
   }
@@ -76,7 +97,7 @@ export class AddressesService {
     userId: string,
     addressId: string,
     dto: UpdateAddressDto,
-  ): Promise<Address> {
+  ): Promise<AddressWithLocation> {
     const existing = await this.findOwned(this.prisma, userId, addressId);
 
     const provinceId = dto.provinceId ?? existing.provinceId;
@@ -100,14 +121,21 @@ export class AddressesService {
         wardId,
         detail: dto.detail,
       },
+      include: addressLocationInclude,
     });
   }
 
-  setDefault(userId: string, addressId: string): Promise<Address> {
+  setDefault(userId: string, addressId: string): Promise<AddressWithLocation> {
     return this.runSerializable(async (tx) => {
       const address = await this.findOwned(tx, userId, addressId);
       if (address.isDefault) {
-        return address;
+        // findOwned không include tên tỉnh/huyện/xã (chỉ dùng nội bộ để check quyền sở
+        // hữu) — fetch lại kèm include để trả đủ dữ liệu cho client, không đụng tới
+        // findOwned để tránh phải include ở mọi nơi khác đang gọi nó.
+        return tx.address.findUniqueOrThrow({
+          where: { id: addressId },
+          include: addressLocationInclude,
+        });
       }
 
       await tx.address.updateMany({
@@ -117,6 +145,7 @@ export class AddressesService {
       return tx.address.update({
         where: { id: addressId },
         data: { isDefault: true },
+        include: addressLocationInclude,
       });
     });
   }

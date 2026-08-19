@@ -4,6 +4,11 @@ Ngày: 2026-08-19
 Repo: backend-user
 Phụ thuộc: [backend-cms] `2026-08-19-ghn-shipping-schema-design.md` phải merge & deploy trước (đổi `Address` sang FK, thêm `ProductVariant.weight`), sau đó bump submodule `vendor/backend-cms` ở repo này.
 
+**Ràng buộc deploy bắt buộc (hard deployment constraint):** trình tự "backend-cms deploy trước, backend-user bump submodule sau" ở trên chỉ mô tả thứ tự code merge — KHÔNG được hiểu là 2 lần deploy tách rời nhau theo thời gian trên môi trường dùng chung DB. Cụ thể:
+
+1. Migration schema của `backend-cms` (đổi `Address` sang FK, thêm `ProductVariant.weight`) và code tiêu thụ schema đó ở `backend-user` (module `addresses` — Task 3, chuyển từ ghi free-text sang ghi `provinceId/districtId/wardId`) phải deploy **cùng một cửa sổ**, không bao giờ deploy cái này mà chưa deploy cái kia, vì `backend-cms` và `backend-user` cùng dùng chung 1 Postgres vật lý: migration của `backend-cms` sẽ xóa các cột free-text cũ, và chính thay đổi ở Task 3 của `backend-user` là thứ khiến repo này ngừng ghi vào các cột đó. Deploy lệch thứ tự/lệch thời điểm sẽ làm 1 trong 2 phía ghi lỗi hoặc mất dữ liệu.
+2. Trước khi deploy lên bất kỳ môi trường dùng chung nào (staging/prod), phải xác nhận bảng `addresses` ở môi trường đó không còn dữ liệu sẽ bị mất bởi migration của `backend-cms` (hoặc có quyết định rõ ràng cách xử lý số dữ liệu đó) — việc này đã được rà soát và xử lý cho DB dev cục bộ, nhưng quyết định đó không tự động áp dụng cho các môi trường khác.
+
 ## Bối cảnh & phạm vi
 
 Tích hợp API GHN để phục vụ bước checkout: khách chọn 1 địa chỉ đã lưu, hệ thống tính phí ship dựa trên địa chỉ đó + tổng khối lượng giỏ hàng hiện tại, trả về danh sách gói cước khả dụng kèm thời gian giao dự kiến.

@@ -137,7 +137,7 @@ describe('ShippingService.getFeeQuote', () => {
     );
   });
 
-  it('báo lỗi 500 khi GHN API lỗi', async () => {
+  it('báo lỗi 500 khi GHN API lỗi, không lộ message lỗi gốc', async () => {
     const {
       prisma,
       addressFindUnique,
@@ -148,13 +148,14 @@ describe('ShippingService.getFeeQuote', () => {
     } = createMocks();
     addressFindUnique.mockResolvedValue(baseAddress);
     cartFindFirst.mockResolvedValue(cartWithItems(300));
-    post.mockRejectedValue(
-      new InternalServerErrorException('Không gọi được API GHN.'),
-    );
+    post.mockRejectedValue(new Error('ECONNREFUSED 1.2.3.4:443'));
     const service = new ShippingService(prisma, ghnClient, config);
 
     await expect(service.getFeeQuote('user-1', 'addr-1')).rejects.toThrow(
       InternalServerErrorException,
+    );
+    await expect(service.getFeeQuote('user-1', 'addr-1')).rejects.not.toThrow(
+      'ECONNREFUSED',
     );
   });
 });

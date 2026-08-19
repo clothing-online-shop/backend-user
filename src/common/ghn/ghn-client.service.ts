@@ -63,6 +63,14 @@ export class GhnClient {
     }
 
     const result = (await response.json()) as GhnResponse<T>;
+
+    if (result.code !== 200) {
+      this.logger.error(
+        `GHN API lỗi (code=${result.code}): POST ${path} — ${result.message}`,
+      );
+      throw new InternalServerErrorException('Không gọi được API GHN.');
+    }
+
     return result.data;
   }
 }
