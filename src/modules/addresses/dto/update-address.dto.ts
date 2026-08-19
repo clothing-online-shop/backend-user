@@ -28,26 +28,20 @@ export class UpdateAddressDto {
   @Matches(VN_PHONE_REGEX, { message: VN_PHONE_INVALID_MESSAGE })
   phone?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'id tỉnh/thành phố' })
   @IsOptional()
   @IsString()
-  @MinLength(1)
-  @MaxLength(100)
-  province?: string;
+  provinceId?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'id quận/huyện' })
   @IsOptional()
   @IsString()
-  @MinLength(1)
-  @MaxLength(100)
-  district?: string;
+  districtId?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'id phường/xã' })
   @IsOptional()
   @IsString()
-  @MinLength(1)
-  @MaxLength(100)
-  ward?: string;
+  wardId?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

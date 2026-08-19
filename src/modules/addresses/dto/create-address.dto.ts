@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
@@ -24,23 +25,20 @@ export class CreateAddressDto {
   @Matches(VN_PHONE_REGEX, { message: VN_PHONE_INVALID_MESSAGE })
   phone: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'id tỉnh/thành phố (GET /locations/provinces)' })
   @IsString()
-  @MinLength(1)
-  @MaxLength(100)
-  province: string;
+  @IsNotEmpty()
+  provinceId: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'id quận/huyện (GET /locations/districts)' })
   @IsString()
-  @MinLength(1)
-  @MaxLength(100)
-  district: string;
+  @IsNotEmpty()
+  districtId: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'id phường/xã (GET /locations/wards)' })
   @IsString()
-  @MinLength(1)
-  @MaxLength(100)
-  ward: string;
+  @IsNotEmpty()
+  wardId: string;
 
   @ApiProperty()
   @IsString()
