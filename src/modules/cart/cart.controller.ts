@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -64,5 +66,17 @@ export class CartController {
   })
   mergeCart(@CurrentUser() user: AuthenticatedUser, @Body() dto: MergeCartDto) {
     return this.cartService.mergeCart(user.id, dto);
+  }
+
+  @Post('validate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Rà soát tồn kho/tình trạng bán của giỏ hàng hiện tại trước khi checkout — tự xóa dòng hết hàng/ngừng bán, hạ số lượng dòng không đủ hàng',
+    description:
+      'Trả về { cart, adjustments }. adjustments rỗng nghĩa là giỏ hàng hợp lệ, an toàn để checkout. Mỗi phần tử trong adjustments có reason là một trong: "unavailable" (sản phẩm ngừng bán), "out_of_stock" (hết hàng), "capped" (không đủ số lượng, đã hạ xuống finalQuantity).',
+  })
+  validateCart(@CurrentUser() user: AuthenticatedUser) {
+    return this.cartService.validateCart(user.id);
   }
 }

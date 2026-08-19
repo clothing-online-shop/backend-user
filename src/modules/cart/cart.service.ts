@@ -112,9 +112,12 @@ export class CartService {
         where: { cartId: cart.id, productVariantId: item.productVariantId },
       });
       const desiredQty = (existing?.quantity ?? 0) + item.quantity;
-      const finalQty = Math.min(desiredQty, variant.stockQuantity);
+      const { finalQuantity, reason } = resolveStockOutcome(
+        variant.stockQuantity,
+        desiredQty,
+      );
 
-      if (finalQty <= 0) {
+      if (finalQuantity <= 0) {
         adjustments.push({
           productVariantId: item.productVariantId,
           requestedQuantity: item.quantity,
@@ -127,25 +130,97 @@ export class CartService {
       if (existing) {
         await this.prisma.cartItem.update({
           where: { id: existing.id },
-          data: { quantity: finalQty },
+          data: { quantity: finalQuantity },
         });
       } else {
         await this.prisma.cartItem.create({
           data: {
             cartId: cart.id,
             productVariantId: item.productVariantId,
-            quantity: finalQty,
+            quantity: finalQuantity,
           },
         });
       }
 
-      if (finalQty < desiredQty) {
+      if (reason === 'capped') {
         adjustments.push({
           productVariantId: item.productVariantId,
           requestedQuantity: item.quantity,
-          finalQuantity: finalQty,
+          finalQuantity,
           reason: 'capped',
         });
+      }
+    }
+
+    return { cart: await this.findMyCart(userId), adjustments };
+  }
+
+  // Rà soát toàn bộ giỏ hàng theo tồn kho/tình trạng bán HIỆN TẠI — dùng ngay trước khi
+  // vào bước checkout. Dùng chung resolveStockOutcome với mergeCart cho phần so sánh tồn
+  // kho (tránh 2 công thức lệch nhau nếu sau này đổi luật), áp dụng cho các dòng ĐÃ CÓ
+  // trong giỏ thay vì danh sách merge vào.
+  async validateCart(userId: string) {
+    const cart = await this.prisma.cart.findFirst({
+      where: { userId },
+      include: cartInclude,
+    });
+
+    const adjustments: MergeAdjustment[] = [];
+
+    for (const item of cart?.items ?? []) {
+      const status: ProductStatus = item.productVariant.product.status;
+      if (status !== ProductStatus.ACTIVE) {
+        // deleteMany (không phải delete) — không throw nếu dòng đã bị request khác xóa/sửa
+        // trước đó (2 tab, double-click). Chỉ báo adjustment khi chính request này thật sự
+        // xóa được dòng (count > 0) — tránh báo sai cho khách 1 thay đổi mà mình không phải
+        // người thực hiện.
+        const { count } = await this.prisma.cartItem.deleteMany({
+          where: { id: item.id },
+        });
+        if (count > 0) {
+          adjustments.push({
+            productVariantId: item.productVariantId,
+            requestedQuantity: item.quantity,
+            finalQuantity: 0,
+            reason: 'unavailable',
+          });
+        }
+        continue;
+      }
+
+      const { finalQuantity, reason } = resolveStockOutcome(
+        item.productVariant.stockQuantity,
+        item.quantity,
+      );
+
+      if (reason === 'out_of_stock') {
+        const { count } = await this.prisma.cartItem.deleteMany({
+          where: { id: item.id },
+        });
+        if (count > 0) {
+          adjustments.push({
+            productVariantId: item.productVariantId,
+            requestedQuantity: item.quantity,
+            finalQuantity: 0,
+            reason: 'out_of_stock',
+          });
+        }
+        continue;
+      }
+
+      if (reason === 'capped') {
+        const { count } = await this.prisma.cartItem.updateMany({
+          where: { id: item.id },
+          data: { quantity: finalQuantity },
+        });
+        if (count > 0) {
+          adjustments.push({
+            productVariantId: item.productVariantId,
+            requestedQuantity: item.quantity,
+            finalQuantity,
+            reason: 'capped',
+          });
+        }
       }
     }
 
@@ -196,6 +271,26 @@ export class CartService {
 const cartInclude = {
   items: { include: { productVariant: { include: { product: true } } } },
 } as const;
+
+// Logic quyết định tồn kho dùng chung giữa mergeCart (số lượng mong muốn = đã có + thêm
+// vào) và validateCart (số lượng mong muốn = đang có sẵn trong giỏ) — tránh 2 công thức
+// riêng biệt dễ lệch nhau khi đổi luật (trước đây mergeCart dùng Math.min, validateCart
+// dùng so sánh trực tiếp, cùng ý nghĩa nhưng viết 2 chỗ).
+function resolveStockOutcome(
+  stockQuantity: number,
+  desiredQuantity: number,
+): {
+  finalQuantity: number;
+  reason: 'out_of_stock' | 'capped' | null;
+} {
+  if (stockQuantity <= 0) {
+    return { finalQuantity: 0, reason: 'out_of_stock' };
+  }
+  if (stockQuantity < desiredQuantity) {
+    return { finalQuantity: stockQuantity, reason: 'capped' };
+  }
+  return { finalQuantity: desiredQuantity, reason: null };
+}
 
 function assertStockAvailable(
   variant: ProductVariant,
