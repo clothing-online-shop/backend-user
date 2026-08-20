@@ -9,6 +9,19 @@ import { AllExceptionsFilter } from '../src/common/filters/http-exception.filter
 import type { JwtPayload } from '../src/modules/auth/strategies/jwt.strategy';
 import { UserRole } from '@prisma/client';
 
+interface CreateOrderResponse {
+  id: string;
+  status: string;
+  orderCode: string;
+  items: Array<{
+    productVariantId: string;
+    productName: string;
+    size: string;
+    color: string;
+    quantity: number;
+  }>;
+}
+
 describe('Orders (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -72,7 +85,11 @@ describe('Orders (e2e)', () => {
       data: { ghnId: ghnSeed + 1, provinceId: province.id, name: 'Huyện Test' },
     });
     const ward = await prisma.ward.create({
-      data: { ghnCode: `WARD-TEST-${ghnSeed}`, districtId: district.id, name: 'Xã Test' },
+      data: {
+        ghnCode: `WARD-TEST-${ghnSeed}`,
+        districtId: district.id,
+        name: 'Xã Test',
+      },
     });
     const addr = await prisma.address.create({
       data: {
@@ -131,12 +148,16 @@ describe('Orders (e2e)', () => {
     // xoá KHÔNG GIỚI HẠN toàn bộ bảng. Mỗi lệnh xoá dưới đây vì vậy phải được bọc trong
     // guard kiểm tra id tương ứng đã được gán hay chưa trước khi chạy.
     if (userId) {
-      await prisma.orderStatusHistory.deleteMany({ where: { order: { userId } } });
+      await prisma.orderStatusHistory.deleteMany({
+        where: { order: { userId } },
+      });
       await prisma.orderItem.deleteMany({ where: { order: { userId } } });
       await prisma.order.deleteMany({ where: { userId } });
     }
     if (variantId) {
-      await prisma.stockMovement.deleteMany({ where: { productVariantId: variantId } });
+      await prisma.stockMovement.deleteMany({
+        where: { productVariantId: variantId },
+      });
     }
     if (cartId) {
       await prisma.cartItem.deleteMany({ where: { cartId } });
@@ -178,10 +199,12 @@ describe('Orders (e2e)', () => {
       })
       .expect(201);
 
-    expect(response.body.status).toBe('PENDING');
-    expect(response.body.orderCode).toMatch(/^DH\d{8}[A-Z0-9]{6}$/);
-    expect(response.body.items).toHaveLength(1);
-    expect(response.body.items[0]).toMatchObject({
+    const body = response.body as CreateOrderResponse;
+
+    expect(body.status).toBe('PENDING');
+    expect(body.orderCode).toMatch(/^DH\d{8}[A-Z0-9]{6}$/);
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
       productVariantId: variantId,
       productName: 'Áo thun E2E',
       size: 'M',
@@ -189,7 +212,7 @@ describe('Orders (e2e)', () => {
       quantity: 2,
     });
 
-    const orderId = response.body.id as string;
+    const orderId = body.id;
 
     const variant = await prisma.productVariant.findUniqueOrThrow({
       where: { id: variantId },
