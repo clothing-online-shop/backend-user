@@ -75,6 +75,8 @@ src/modules/<ten-module>/
 ## Bắt đầu tính năng mới
 
 - Trước khi code: `git checkout develop && git pull` để lấy code mới nhất, sau đó tạo branch mới từ `develop` với tên phù hợp tính năng đang làm (`feature/<mo-ta-ngan>`, `fix/<mo-ta-ngan>`) — không code thẳng trên `develop`.
+- Trước khi bắt tay vào tính năng mới (không áp dụng cho fix nhỏ đang dở): rà soát nhanh phần code liên quan ở nhánh làm việc hiện tại của **cả `backend-user` lẫn `frontend-website`** (2 repo luôn đi cùng nhau — BE user phục vụ trực tiếp FE khách hàng), tìm lỗi logic còn tồn đọng quanh khu vực tính năng sắp đụng tới (API trả sai field/status, thiếu validate, FE gọi sai contract Swagger hiện tại...). Có lỗi thì sửa trước — commit riêng, có thể trên nhánh `fix/...` tách biệt — rồi mới bắt đầu code tính năng mới, không dồn việc dọn nợ này tới lúc tính năng mới xong mới làm. Mục tiêu: code không bug, logic đúng, dễ maintain, không lặp code.
+- Trước khi viết 1 hàm/helper mới: rà lại codebase xem đã có sẵn cái làm việc tương tự chưa (grep trong `src/common/utils/`, module liên quan) — có thì dùng lại, không viết mới. Trong lúc code, nếu thấy 1 hàm sắp viết ra nhiều khả năng còn dùng lại ở module khác (không phải chỉ đoán, mà thấy rõ lý do — vd logic không phụ thuộc riêng 1 model) thì viết thẳng vào `src/common/utils/` ngay từ đầu, không đợi phát hiện trùng lặp rồi mới refactor sau.
 - Sau khi code xong, trước khi báo hoàn thành/mở PR: chủ động tự review lại toàn bộ diff theo đúng quy ước trong `CLAUDE.md` này và `README.md` của repo — không chỉ dựa vào lint/build pass.
 
 ## Trước khi mở PR
