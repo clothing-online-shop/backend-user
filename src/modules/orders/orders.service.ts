@@ -105,9 +105,29 @@ export class OrdersService {
         const order = await this.prisma.$transaction(async (tx) => {
           const lockedById = await this.lockVariants(tx, variantIds);
 
+          // Nhiều dòng CartItem có thể trỏ cùng 1 productVariantId (schema không có unique
+          // constraint trên (cartId, productVariantId), cart.service.ts merge giỏ hàng theo
+          // kiểu findFirst-rồi-create không atomic) — nên phải cộng dồn số lượng theo từng
+          // variant rồi mới so với tồn kho, thay vì so từng dòng riêng lẻ với cùng 1 số tồn
+          // kho đầy đủ (nếu không, tổng số lượng trừ ở vòng lặp bên dưới có thể vượt tồn kho
+          // dù mỗi dòng kiểm tra riêng lẻ đều "hợp lệ").
+          const requestedQuantityByVariant = new Map<string, number>();
           for (const item of cartItems) {
-            const variant = lockedById.get(item.productVariantId)!;
-            if (item.quantity > variant.stockQuantity) {
+            requestedQuantityByVariant.set(
+              item.productVariantId,
+              (requestedQuantityByVariant.get(item.productVariantId) ?? 0) +
+                item.quantity,
+            );
+          }
+          for (const [
+            productVariantId,
+            totalRequested,
+          ] of requestedQuantityByVariant) {
+            const variant = this.getLockedVariantOrThrow(
+              lockedById,
+              productVariantId,
+            );
+            if (totalRequested > variant.stockQuantity) {
               throw new ConflictException(
                 `Sản phẩm "${variant.productName}" vừa hết hàng, vui lòng thử lại.`,
               );
@@ -116,7 +136,10 @@ export class OrdersService {
 
           let totalAmount = new Prisma.Decimal(0);
           const itemsData = cartItems.map((item) => {
-            const variant = lockedById.get(item.productVariantId)!;
+            const variant = this.getLockedVariantOrThrow(
+              lockedById,
+              item.productVariantId,
+            );
             totalAmount = totalAmount.add(variant.price.mul(item.quantity));
             return {
               productVariantId: item.productVariantId,
@@ -223,7 +246,15 @@ export class OrdersService {
 
     const result = new Map<string, LockedVariant>();
     for (const row of rows) {
-      const product = productById.get(row.productId)!;
+      // Sản phẩm có thể bị xoá cứng giữa lúc truy vấn rows ở trên và findMany này (dù cửa sổ
+      // rất hẹp vì cùng trong 1 transaction) — không dùng "!" để bypass, throw lỗi rõ ràng
+      // thay vì để TypeError không kiểm soát lọt ra ngoài thành lỗi 500.
+      const product = productById.get(row.productId);
+      if (!product) {
+        throw new ConflictException(
+          'Một số sản phẩm không còn tồn tại, vui lòng thử lại.',
+        );
+      }
       result.set(row.id, {
         id: row.id,
         stockQuantity: row.stockQuantity,
@@ -236,6 +267,24 @@ export class OrdersService {
       });
     }
     return result;
+  }
+
+  // Nếu 1 ProductVariant bị xoá cứng giữa lúc preflight đọc dữ liệu (dòng cartItems ở trên)
+  // và lúc lockVariants() lock hàng bằng FOR UPDATE, lockedById sẽ thiếu entry cho
+  // productVariantId đó. Guard tại đây thay vì dùng "!" để trả về ConflictException nhất
+  // quán với các lỗi race condition khác trong hàm này, thay vì để TypeError lọt ra thành
+  // lỗi 500 không kiểm soát.
+  private getLockedVariantOrThrow(
+    lockedById: Map<string, LockedVariant>,
+    productVariantId: string,
+  ): LockedVariant {
+    const variant = lockedById.get(productVariantId);
+    if (!variant) {
+      throw new ConflictException(
+        'Một số sản phẩm không còn tồn tại, vui lòng thử lại.',
+      );
+    }
+    return variant;
   }
 
   // Best-effort — gửi mail xác nhận không phải điều kiện để coi đơn hàng đã tạo thành

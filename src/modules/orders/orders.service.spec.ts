@@ -344,6 +344,106 @@ describe('OrdersService.createOrder', () => {
     expect(stockMovementCreate).not.toHaveBeenCalled();
   });
 
+  it('2 dòng CartItem cùng trỏ 1 productVariantId, mỗi dòng riêng lẻ đủ hàng nhưng tổng vượt tồn kho → ConflictException, không trừ kho/tạo đơn', async () => {
+    const {
+      prisma,
+      mail,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+      productFindMany,
+      orderCreate,
+      stockMovementCreate,
+      productVariantUpdate,
+    } = createMocks();
+    addressFindUnique.mockResolvedValue(address());
+    // Giỏ hàng có 2 dòng cùng trỏ variant-1 (vd do merge giỏ hàng không atomic tạo ra 2 dòng
+    // riêng biệt), mỗi dòng quantity=6 — so với stockQuantity trên chính productVariant của
+    // từng dòng cart item (10) thì đều "đủ hàng" khi preflight kiểm tra riêng lẻ.
+    cartItemFindMany.mockResolvedValue([
+      cartItem({
+        id: 'item-1',
+        productVariantId: 'variant-1',
+        quantity: 6,
+        stockQuantity: 10,
+      }),
+      cartItem({
+        id: 'item-2',
+        productVariantId: 'variant-1',
+        quantity: 6,
+        stockQuantity: 10,
+      }),
+    ]);
+    // Trong transaction, variant-1 chỉ có 1 dòng bị lock (vì variantIds đã dedup), tồn kho 10.
+    // Tổng số lượng yêu cầu thực tế là 6 + 6 = 12 > 10 → phải bị chặn dù mỗi dòng cart item
+    // riêng lẻ (6) đều <= 10.
+    queryRaw.mockResolvedValue([
+      lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
+    ]);
+    productFindMany.mockResolvedValue([
+      { id: 'product-1', name: 'Áo thun basic', thumbnail: null },
+    ]);
+
+    const service = new OrdersService(prisma, mail);
+
+    await expect(
+      service.createOrder(
+        'user-1',
+        baseDto({ cartItemIds: ['item-1', 'item-2'] }),
+      ),
+    ).rejects.toThrow(ConflictException);
+    expect(stockMovementCreate).not.toHaveBeenCalled();
+    expect(productVariantUpdate).not.toHaveBeenCalled();
+    expect(orderCreate).not.toHaveBeenCalled();
+  });
+
+  it('lockVariants trả về ít dòng hơn variantIds yêu cầu (variant bị xoá giữa preflight và lock) → ConflictException, không phải lỗi hệ thống', async () => {
+    const {
+      prisma,
+      mail,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+      productFindMany,
+      orderCreate,
+      stockMovementCreate,
+    } = createMocks();
+    addressFindUnique.mockResolvedValue(address());
+    cartItemFindMany.mockResolvedValue([
+      cartItem({
+        id: 'item-1',
+        productVariantId: 'variant-1',
+        quantity: 1,
+        stockQuantity: 10,
+      }),
+      cartItem({
+        id: 'item-2',
+        productVariantId: 'variant-2',
+        quantity: 1,
+        stockQuantity: 10,
+      }),
+    ]);
+    // variant-2 bị xoá cứng giữa lúc preflight đọc cartItems và lúc FOR UPDATE lock trong
+    // transaction — $queryRaw chỉ trả về 1 dòng (variant-1) dù variantIds yêu cầu 2.
+    queryRaw.mockResolvedValue([
+      lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
+    ]);
+    productFindMany.mockResolvedValue([
+      { id: 'product-1', name: 'Áo thun basic', thumbnail: null },
+    ]);
+
+    const service = new OrdersService(prisma, mail);
+
+    await expect(
+      service.createOrder(
+        'user-1',
+        baseDto({ cartItemIds: ['item-1', 'item-2'] }),
+      ),
+    ).rejects.toThrow(ConflictException);
+    expect(stockMovementCreate).not.toHaveBeenCalled();
+    expect(orderCreate).not.toHaveBeenCalled();
+  });
+
   it('trùng orderCode ở lần thử đầu → tự retry và tạo đơn thành công ở lần thử thứ 2', async () => {
     const {
       prisma,
