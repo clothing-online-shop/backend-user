@@ -184,26 +184,30 @@ describe('OrdersService.createOrder', () => {
       where: { id: 'variant-1' },
       data: { stockQuantity: { decrement: 2 } },
     });
+    const expectedOrderData: Record<string, unknown> = {
+      userId: 'user-1',
+      status: 'PENDING',
+      paymentMethod: 'COD',
+      items: {
+        create: [
+          expect.objectContaining({
+            productVariantId: 'variant-1',
+            productName: 'Áo thun basic',
+            variantSku: 'SKU-variant-1',
+            size: 'M',
+            color: 'Đen',
+            thumbnail: 'thumb.jpg',
+            quantity: 2,
+          }),
+        ],
+      },
+    };
+    const expectedData = expect.objectContaining(
+      expectedOrderData,
+    ) as unknown as Record<string, unknown>;
     expect(orderCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          userId: 'user-1',
-          status: 'PENDING',
-          paymentMethod: 'COD',
-          items: {
-            create: [
-              expect.objectContaining({
-                productVariantId: 'variant-1',
-                productName: 'Áo thun basic',
-                variantSku: 'SKU-variant-1',
-                size: 'M',
-                color: 'Đen',
-                thumbnail: 'thumb.jpg',
-                quantity: 2,
-              }),
-            ],
-          },
-        }),
+        data: expectedData,
       }),
     );
     expect(orderStatusHistoryCreate).toHaveBeenCalledWith({

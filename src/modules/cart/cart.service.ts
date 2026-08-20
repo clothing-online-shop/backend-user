@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 import { Cart, CartItem, Product, ProductVariant } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
-import { ProductStatus } from '../products/product-status.enum';
 import { isProductAvailable } from '../../common/utils/product-availability.util';
 import { AddCartItemDto } from './dto/add-cart-item.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
