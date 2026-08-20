@@ -159,7 +159,13 @@ describe('OrdersService.createOrder', () => {
       }),
     ]);
     productFindMany.mockResolvedValue([
-      { id: 'product-1', name: 'Áo thun basic', thumbnail: 'thumb.jpg' },
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: 'thumb.jpg',
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
     ]);
     orderCreate.mockResolvedValue({
       id: 'order-1',
@@ -224,8 +230,107 @@ describe('OrdersService.createOrder', () => {
       },
     });
     expect(cartItemDeleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ['item-1'] } },
+      where: { OR: [{ id: 'item-1', quantity: 2 }] },
     });
+  });
+
+  it('khách đổi số lượng cart item đúng lúc transaction đang chạy (PATCH /cart/items/:id) → deleteMany không khớp quantity cũ, ConflictException, rollback toàn bộ', async () => {
+    const {
+      prisma,
+      mail,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+      productFindMany,
+      orderCreate,
+      cartItemDeleteMany,
+    } = createMocks();
+    addressFindUnique.mockResolvedValue(address());
+    // Preflight đọc quantity=2 (chụp tại thời điểm này), toàn bộ itemsData/trừ kho/totalAmount
+    // trong transaction đều dùng số lượng này.
+    cartItemFindMany.mockResolvedValue([
+      cartItem({ id: 'item-1', productVariantId: 'variant-1', quantity: 2 }),
+    ]);
+    queryRaw.mockResolvedValue([
+      lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
+    ]);
+    productFindMany.mockResolvedValue([
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
+    ]);
+    orderCreate.mockResolvedValue({
+      id: 'order-1',
+      orderCode: 'DH20260820ABC123',
+      totalAmount: new Prisma.Decimal(300000),
+      items: [],
+    });
+    // Mô phỏng: đúng lúc transaction đang chạy, khách gọi PATCH /cart/items/item-1 đổi quantity
+    // 2 -> 5. Dòng cart item vẫn tồn tại (không bị xoá) nhưng where của deleteMany match cả
+    // quantity=2 (giá trị cũ, đã lỗi thời) nên không còn khớp dòng thật (quantity đã là 5) —
+    // count trả về 0.
+    cartItemDeleteMany.mockResolvedValue({ count: 0 });
+
+    const service = new OrdersService(prisma, mail);
+
+    await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
+      ConflictException,
+    );
+    expect(cartItemDeleteMany).toHaveBeenCalledWith({
+      where: { OR: [{ id: 'item-1', quantity: 2 }] },
+    });
+    // order.create đã chạy trước bước xoá cart item trong cùng lần thử, nhưng vì toàn bộ nằm
+    // trong 1 $transaction callback, throw ở bước xoá cart item khiến Prisma rollback hết.
+    expect(orderCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('sản phẩm bị ngừng bán/xoá mềm giữa preflight và transaction → ConflictException trong transaction, không tạo đơn/trừ kho', async () => {
+    const {
+      prisma,
+      mail,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+      productFindMany,
+      orderCreate,
+      stockMovementCreate,
+    } = createMocks();
+    addressFindUnique.mockResolvedValue(address());
+    // Preflight (cartItem() mặc định status ACTIVE) pass bình thường.
+    cartItemFindMany.mockResolvedValue([
+      cartItem({
+        id: 'item-1',
+        productVariantId: 'variant-1',
+        quantity: 2,
+        stockQuantity: 10,
+      }),
+    ]);
+    queryRaw.mockResolvedValue([
+      lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
+    ]);
+    // Admin ngừng bán sản phẩm đúng lúc giữa preflight và transaction — product.findMany bên
+    // trong transaction đọc dữ liệu MỚI, thấy INACTIVE dù preflight (đọc trước đó) đã pass.
+    productFindMany.mockResolvedValue([
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.INACTIVE,
+        isDelete: false,
+      },
+    ]);
+
+    const service = new OrdersService(prisma, mail);
+
+    await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
+      ConflictException,
+    );
+    expect(orderCreate).not.toHaveBeenCalled();
+    expect(stockMovementCreate).not.toHaveBeenCalled();
   });
 
   it('submit trùng đồng thời (double-click/retry): cartItem đã bị 1 transaction khác xoá trước → ConflictException, rollback toàn bộ (không tạo đơn trùng/trừ kho 2 lần)', async () => {
@@ -256,7 +361,13 @@ describe('OrdersService.createOrder', () => {
       }),
     ]);
     productFindMany.mockResolvedValue([
-      { id: 'product-1', name: 'Áo thun basic', thumbnail: 'thumb.jpg' },
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: 'thumb.jpg',
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
     ]);
     orderCreate.mockResolvedValue({
       id: 'order-1',
@@ -390,7 +501,13 @@ describe('OrdersService.createOrder', () => {
       lockedRow({ id: 'variant-1', stockQuantity: 1, productId: 'product-1' }),
     ]);
     productFindMany.mockResolvedValue([
-      { id: 'product-1', name: 'Áo thun basic', thumbnail: null },
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
     ]);
 
     const service = new OrdersService(prisma, mail);
@@ -439,7 +556,13 @@ describe('OrdersService.createOrder', () => {
       lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
     ]);
     productFindMany.mockResolvedValue([
-      { id: 'product-1', name: 'Áo thun basic', thumbnail: null },
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
     ]);
 
     const service = new OrdersService(prisma, mail);
@@ -487,7 +610,13 @@ describe('OrdersService.createOrder', () => {
       lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
     ]);
     productFindMany.mockResolvedValue([
-      { id: 'product-1', name: 'Áo thun basic', thumbnail: null },
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
     ]);
 
     const service = new OrdersService(prisma, mail);
@@ -520,7 +649,13 @@ describe('OrdersService.createOrder', () => {
       lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
     ]);
     productFindMany.mockResolvedValue([
-      { id: 'product-1', name: 'Áo thun basic', thumbnail: null },
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
     ]);
     const collisionError = new Prisma.PrismaClientKnownRequestError('unique', {
       code: 'P2002',
@@ -558,7 +693,13 @@ describe('OrdersService.createOrder', () => {
       lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
     ]);
     productFindMany.mockResolvedValue([
-      { id: 'product-1', name: 'Áo thun basic', thumbnail: null },
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
     ]);
     const collisionError = new Prisma.PrismaClientKnownRequestError('unique', {
       code: 'P2002',

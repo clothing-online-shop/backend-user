@@ -40,6 +40,8 @@ type LockedVariant = {
   color: string;
   productName: string;
   thumbnail: string | null;
+  productStatus: number;
+  productIsDelete: boolean;
 };
 
 @Injectable()
@@ -129,6 +131,20 @@ export class OrdersService {
               lockedById,
               productVariantId,
             );
+            // isProductAvailable ở preflight chỉ đọc dữ liệu tại thời điểm đó — nếu admin
+            // ngừng bán/xoá mềm sản phẩm đúng lúc giữa preflight và transaction này, preflight
+            // không bắt được. Re-check ở đây bằng status/isDelete đã lấy kèm lúc lockVariants(),
+            // cùng nguồn dữ liệu đáng tin cậy như stockQuantity bên dưới.
+            if (
+              !isProductAvailable({
+                status: variant.productStatus,
+                isDelete: variant.productIsDelete,
+              })
+            ) {
+              throw new ConflictException(
+                `Sản phẩm "${variant.productName}" hiện không còn khả dụng, vui lòng thử lại.`,
+              );
+            }
             if (totalRequested > variant.stockQuantity) {
               throw new ConflictException(
                 `Sản phẩm "${variant.productName}" vừa hết hàng, vui lòng thử lại.`,
@@ -192,15 +208,23 @@ export class OrdersService {
             },
           });
 
-          // Kết quả deleteMany dùng làm guard tồn tại nguyên tử cho chính cart item, thực
-          // hiện trong cùng transaction với bước trừ kho ở trên: nếu 1 request đồng thời khác
-          // (double-click "Đặt hàng", hoặc client tự retry) đã đi qua preflight với cùng
-          // cartItemIds và commit trước, các dòng cart item này đã bị xoá — deleteMany ở đây
-          // trả về count < số id yêu cầu. Throw ngay để rollback toàn bộ transaction (trừ
-          // kho, StockMovement, Order, OrderItems, OrderStatusHistory vừa tạo ở trên trong
-          // cùng lần thử này), tránh tạo đơn trùng + trừ kho 2 lần.
+          // Kết quả deleteMany dùng làm guard nguyên tử cho chính cart item, thực hiện trong
+          // cùng transaction với bước trừ kho ở trên. where khớp cả id LẪN quantity (chụp ở
+          // preflight) — không chỉ id — vì itemsData/trừ kho/totalAmount phía trên đều dùng
+          // item.quantity từ preflight; nếu khách đổi số lượng (PATCH /cart/items/:id) đúng
+          // lúc transaction này đang chạy, dòng cart item vẫn còn tồn tại nhưng quantity đã
+          // khác, match theo (id, quantity) sẽ không khớp dòng đó nữa — count < số lượng yêu
+          // cầu, coi như 1 dạng thay đổi đồng thời giống hệt case double-click "Đặt hàng"/
+          // client tự retry. Throw ngay để rollback toàn bộ transaction (trừ kho, StockMovement,
+          // Order, OrderItems, OrderStatusHistory vừa tạo ở trên trong cùng lần thử này), tránh
+          // tạo đơn với số lượng/giá đã lỗi thời.
           const deletedCartItems = await tx.cartItem.deleteMany({
-            where: { id: { in: dto.cartItemIds } },
+            where: {
+              OR: cartItems.map((item) => ({
+                id: item.id,
+                quantity: item.quantity,
+              })),
+            },
           });
           if (deletedCartItems.count !== dto.cartItemIds.length) {
             throw new ConflictException(
@@ -254,7 +278,13 @@ export class OrdersService {
 
     const products = await tx.product.findMany({
       where: { id: { in: [...new Set(rows.map((row) => row.productId))] } },
-      select: { id: true, name: true, thumbnail: true },
+      select: {
+        id: true,
+        name: true,
+        thumbnail: true,
+        status: true,
+        isDelete: true,
+      },
     });
     const productById = new Map(products.map((p) => [p.id, p]));
 
@@ -278,6 +308,8 @@ export class OrdersService {
         color: row.color,
         productName: product.name,
         thumbnail: product.thumbnail,
+        productStatus: product.status,
+        productIsDelete: product.isDelete,
       });
     }
     return result;
