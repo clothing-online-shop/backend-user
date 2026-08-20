@@ -172,6 +172,11 @@ describe('OrdersService.createOrder', () => {
     const result = await service.createOrder('user-1', baseDto());
 
     expect(result.id).toBe('order-1');
+    // Decimal.toJSON() trả string, không phải number — nếu quên map .toNumber() trước khi
+    // trả về, totalAmount sẽ là "300000" (string) thay vì 300000 (number) trên response HTTP,
+    // trái với design spec (§4) khai totalAmount: number.
+    expect(result.totalAmount).toBe(300000);
+    expect(typeof result.totalAmount).toBe('number');
     expect(stockMovementCreate).toHaveBeenCalledWith({
       data: {
         productVariantId: 'variant-1',
@@ -221,6 +226,59 @@ describe('OrdersService.createOrder', () => {
     expect(cartItemDeleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['item-1'] } },
     });
+  });
+
+  it('submit trùng đồng thời (double-click/retry): cartItem đã bị 1 transaction khác xoá trước → ConflictException, rollback toàn bộ (không tạo đơn trùng/trừ kho 2 lần)', async () => {
+    const {
+      prisma,
+      mail,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+      productFindMany,
+      orderCreate,
+      cartItemDeleteMany,
+    } = createMocks();
+    addressFindUnique.mockResolvedValue(address());
+    cartItemFindMany.mockResolvedValue([
+      cartItem({ id: 'item-1', productVariantId: 'variant-1', quantity: 2 }),
+    ]);
+    // Preflight (ngoài transaction) vẫn thấy cart item còn sống — race xảy ra sau đó, bên
+    // trong transaction: 1 request khác với cùng cartItemIds đã commit trước, xoá mất dòng
+    // cart item này. lockVariants vẫn thấy đủ tồn kho (giả lập trường hợp tồn kho vẫn đủ sau
+    // lần trừ đầu, nên guard duy nhất bắt được race này là deleteMany count).
+    queryRaw.mockResolvedValue([
+      lockedRow({
+        id: 'variant-1',
+        stockQuantity: 10,
+        price: '150000',
+        productId: 'product-1',
+      }),
+    ]);
+    productFindMany.mockResolvedValue([
+      { id: 'product-1', name: 'Áo thun basic', thumbnail: 'thumb.jpg' },
+    ]);
+    orderCreate.mockResolvedValue({
+      id: 'order-1',
+      orderCode: 'DH20260820ABC123',
+      totalAmount: new Prisma.Decimal(300000),
+      items: [],
+    });
+    // Mô phỏng phía thua trong race: cart item đã bị request thắng xoá trước, nên deleteMany
+    // ở request này không xoá được dòng nào dù dto.cartItemIds có 1 phần tử.
+    cartItemDeleteMany.mockResolvedValue({ count: 0 });
+
+    const service = new OrdersService(prisma, mail);
+
+    await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
+      ConflictException,
+    );
+    // order.create đã chạy trước bước xoá cart item trong cùng lần thử (thứ tự hiện tại của
+    // transaction: trừ kho -> tạo Order -> tạo OrderStatusHistory -> xoá cart item) — nhưng vì
+    // toàn bộ nằm trong 1 $transaction callback, throw ở bước xoá cart item khiến Prisma
+    // rollback hết, nên kết quả cuối cùng createOrder trả về vẫn là lỗi bị throw, không phải
+    // Order đã tạo.
+    expect(orderCreate).toHaveBeenCalledTimes(1);
   });
 
   it('địa chỉ không thuộc về user → NotFoundException', async () => {

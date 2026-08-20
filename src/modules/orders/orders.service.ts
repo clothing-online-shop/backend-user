@@ -29,6 +29,8 @@ type RawVariantRow = {
   productId: string;
 };
 
+type OrderWithItems = Prisma.OrderGetPayload<{ include: { items: true } }>;
+
 type LockedVariant = {
   id: string;
   stockQuantity: number;
@@ -190,15 +192,27 @@ export class OrdersService {
             },
           });
 
-          await tx.cartItem.deleteMany({
+          // Kết quả deleteMany dùng làm guard tồn tại nguyên tử cho chính cart item, thực
+          // hiện trong cùng transaction với bước trừ kho ở trên: nếu 1 request đồng thời khác
+          // (double-click "Đặt hàng", hoặc client tự retry) đã đi qua preflight với cùng
+          // cartItemIds và commit trước, các dòng cart item này đã bị xoá — deleteMany ở đây
+          // trả về count < số id yêu cầu. Throw ngay để rollback toàn bộ transaction (trừ
+          // kho, StockMovement, Order, OrderItems, OrderStatusHistory vừa tạo ở trên trong
+          // cùng lần thử này), tránh tạo đơn trùng + trừ kho 2 lần.
+          const deletedCartItems = await tx.cartItem.deleteMany({
             where: { id: { in: dto.cartItemIds } },
           });
+          if (deletedCartItems.count !== dto.cartItemIds.length) {
+            throw new ConflictException(
+              'Giỏ hàng vừa thay đổi, vui lòng thử lại.',
+            );
+          }
 
           return created;
         });
 
         void this.sendConfirmationEmailBestEffort(userId, order);
-        return order;
+        return toOrderResponse(order);
       } catch (err) {
         const isOrderCodeCollision =
           err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -310,4 +324,20 @@ export class OrdersService {
       );
     }
   }
+}
+
+// Prisma.Decimal.toJSON() trả về string (vd "300000"), không phải number — nếu để nguyên
+// Order/OrderItem thô ra response, totalAmount/priceAtPurchase sẽ serialize thành string
+// qua HTTP dù design spec khai number. Map sang .toNumber() ở đúng ranh giới trả về response,
+// giống toListItem/toVariantDto trong products.service.ts — phần tính toán tiền bên trong
+// transaction vẫn dùng Prisma.Decimal nguyên vẹn, không đụng tới.
+function toOrderResponse(order: OrderWithItems) {
+  return {
+    ...order,
+    totalAmount: order.totalAmount.toNumber(),
+    items: order.items.map((item) => ({
+      ...item,
+      priceAtPurchase: item.priceAtPurchase.toNumber(),
+    })),
+  };
 }

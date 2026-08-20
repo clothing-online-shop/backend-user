@@ -13,12 +13,14 @@ interface CreateOrderResponse {
   id: string;
   status: string;
   orderCode: string;
+  totalAmount: number;
   items: Array<{
     productVariantId: string;
     productName: string;
     size: string;
     color: string;
     quantity: number;
+    priceAtPurchase: number;
   }>;
 }
 
@@ -203,6 +205,10 @@ describe('Orders (e2e)', () => {
 
     expect(body.status).toBe('PENDING');
     expect(body.orderCode).toMatch(/^DH\d{8}[A-Z0-9]{6}$/);
+    // Prisma.Decimal.toJSON() trả string qua JSON.stringify mặc định — assert type number rõ
+    // ràng ở đây để bắt hồi quy nếu service quên map .toNumber() trước khi trả response HTTP.
+    expect(typeof body.totalAmount).toBe('number');
+    expect(body.totalAmount).toBe(300000);
     expect(body.items).toHaveLength(1);
     expect(body.items[0]).toMatchObject({
       productVariantId: variantId,
@@ -211,6 +217,8 @@ describe('Orders (e2e)', () => {
       color: 'Đen',
       quantity: 2,
     });
+    expect(typeof body.items[0].priceAtPurchase).toBe('number');
+    expect(body.items[0].priceAtPurchase).toBe(150000);
 
     const orderId = body.id;
 
