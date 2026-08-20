@@ -123,21 +123,48 @@ describe('Orders (e2e)', () => {
   });
 
   afterAll(async () => {
-    await prisma.orderStatusHistory.deleteMany({ where: { order: { userId } } });
-    await prisma.orderItem.deleteMany({ where: { order: { userId } } });
-    await prisma.order.deleteMany({ where: { userId } });
-    await prisma.stockMovement.deleteMany({ where: { productVariantId: variantId } });
-    await prisma.cartItem.deleteMany({ where: { cartId } });
-    await prisma.cart.deleteMany({ where: { id: cartId } });
-    await prisma.productVariant.deleteMany({ where: { id: variantId } });
-    await prisma.product.deleteMany({ where: { id: productId } });
-    await prisma.category.deleteMany({ where: { id: categoryId } });
-    await prisma.address.deleteMany({ where: { id: addressId } });
-    // Province -> District -> Ward đều khai onDelete: Cascade (xem schema.prisma) — xoá
-    // Province là đủ dọn sạch cả District/Ward vừa tạo cho test này, không cần xoá riêng.
-    await prisma.province.deleteMany({ where: { id: provinceId } });
-    await prisma.user.deleteMany({ where: { id: userId } });
-    await app.close();
+    // Guard: các biến id trên chỉ được gán tuần tự khi từng bước seed trong beforeAll
+    // thành công. Nếu beforeAll throw giữa chừng (ví dụ lỗi tràn số Int4, lỗi DB tạm
+    // thời, hoặc va unique constraint từ lần chạy song song khác), những biến gán SAU
+    // điểm lỗi vẫn là undefined. Prisma loại bỏ key có giá trị undefined khỏi `where`
+    // thay vì coi là "không khớp gì", nên deleteMany({ where: { id: undefined } }) sẽ
+    // xoá KHÔNG GIỚI HẠN toàn bộ bảng. Mỗi lệnh xoá dưới đây vì vậy phải được bọc trong
+    // guard kiểm tra id tương ứng đã được gán hay chưa trước khi chạy.
+    if (userId) {
+      await prisma.orderStatusHistory.deleteMany({ where: { order: { userId } } });
+      await prisma.orderItem.deleteMany({ where: { order: { userId } } });
+      await prisma.order.deleteMany({ where: { userId } });
+    }
+    if (variantId) {
+      await prisma.stockMovement.deleteMany({ where: { productVariantId: variantId } });
+    }
+    if (cartId) {
+      await prisma.cartItem.deleteMany({ where: { cartId } });
+      await prisma.cart.deleteMany({ where: { id: cartId } });
+    }
+    if (variantId) {
+      await prisma.productVariant.deleteMany({ where: { id: variantId } });
+    }
+    if (productId) {
+      await prisma.product.deleteMany({ where: { id: productId } });
+    }
+    if (categoryId) {
+      await prisma.category.deleteMany({ where: { id: categoryId } });
+    }
+    if (addressId) {
+      await prisma.address.deleteMany({ where: { id: addressId } });
+    }
+    if (provinceId) {
+      // Province -> District -> Ward đều khai onDelete: Cascade (xem schema.prisma) — xoá
+      // Province là đủ dọn sạch cả District/Ward vừa tạo cho test này, không cần xoá riêng.
+      await prisma.province.deleteMany({ where: { id: provinceId } });
+    }
+    if (userId) {
+      await prisma.user.deleteMany({ where: { id: userId } });
+    }
+    if (app) {
+      await app.close();
+    }
   });
 
   it('POST /orders — tạo đơn thành công: trừ kho, ghi lịch sử, xoá cart item', async () => {
