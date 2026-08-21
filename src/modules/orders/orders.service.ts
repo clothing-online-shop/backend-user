@@ -259,6 +259,22 @@ export class OrdersService {
     throw new Error('unreachable');
   }
 
+  // Dùng cho trang cảm ơn/theo dõi đơn — cần đọc lại được bất kỳ lúc nào (refresh, quay
+  // lại, mở link đã lưu), không thể chỉ dựa vào response giữ trong state của POST /orders.
+  async getOrderByCode(userId: string, orderCode: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { orderCode },
+      include: { items: true },
+    });
+    // Không tìm thấy HOẶC không thuộc về user hiện tại → gộp chung 1 404, không phân biệt
+    // 2 case để tránh lộ thông tin tồn tại của mã đơn người khác — khớp pattern đã dùng
+    // trong createOrder() (check địa chỉ/cart item).
+    if (!order || order.userId !== userId) {
+      throw new NotFoundException('Không tìm thấy đơn hàng.');
+    }
+    return toOrderResponse(order);
+  }
+
   // SELECT ... FOR UPDATE khoá các dòng ProductVariant liên quan, sắp theo id tăng dần
   // (variantIds đã được sort trước khi gọi) — đảm bảo 2 đơn hàng chứa chung sản phẩm luôn
   // lock theo cùng 1 thứ tự, tránh deadlock. Cùng lý do đã áp dụng cho lockVariant() ở
