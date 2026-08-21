@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PaymentProvider, Prisma } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../../config/prisma.service';
@@ -715,18 +711,60 @@ describe('OrdersService.createOrder', () => {
     expect(orderCreate).toHaveBeenCalledTimes(3);
   });
 
-  it('paymentMethod khác COD → BadRequestException, không gọi Prisma', async () => {
-    const { prisma, mail, addressFindUnique } = createMocks();
+  it('paymentMethod = VNPAY → tạo đơn thành công, lưu đúng phương thức đã chọn', async () => {
+    const {
+      prisma,
+      mail,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+      productFindMany,
+      orderCreate,
+    } = createMocks();
+
+    addressFindUnique.mockResolvedValue(address());
+    cartItemFindMany.mockResolvedValue([
+      cartItem({ id: 'item-1', productVariantId: 'variant-1', quantity: 1 }),
+    ]);
+    queryRaw.mockResolvedValue([
+      lockedRow({
+        id: 'variant-1',
+        stockQuantity: 10,
+        price: '150000',
+        productId: 'product-1',
+      }),
+    ]);
+    productFindMany.mockResolvedValue([
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
+    ]);
+    orderCreate.mockResolvedValue({
+      id: 'order-1',
+      orderCode: 'DH20260821XYZ789',
+      totalAmount: new Prisma.Decimal(150000),
+      items: [],
+    });
 
     const service = new OrdersService(prisma, mail);
+    const result = await service.createOrder(
+      'user-1',
+      baseDto({ paymentMethod: PaymentProvider.VNPAY }),
+    );
 
-    await expect(
-      service.createOrder(
-        'user-1',
-        baseDto({ paymentMethod: PaymentProvider.VNPAY }),
-      ),
-    ).rejects.toThrow(BadRequestException);
-    expect(addressFindUnique).not.toHaveBeenCalled();
+    expect(result.id).toBe('order-1');
+    const expectedData = expect.objectContaining({
+      paymentMethod: 'VNPAY',
+    }) as unknown as Record<string, unknown>;
+    expect(orderCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expectedData,
+      }),
+    );
   });
 });
 

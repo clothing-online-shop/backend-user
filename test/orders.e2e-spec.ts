@@ -280,4 +280,26 @@ describe('Orders (e2e)', () => {
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
   });
+
+  it('POST /orders — paymentMethod = VNPAY vẫn tạo đơn thành công, lưu đúng phương thức đã chọn', async () => {
+    // Tự tạo cart item riêng cho test này — các test trước đã tiêu thụ/xoá cartItemId gốc.
+    const vnpayCartItem = await prisma.cartItem.create({
+      data: { cartId, productVariantId: variantId, quantity: 1 },
+    });
+
+    const response = await request(app.getHttpServer())
+      .post('/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        addressId,
+        cartItemIds: [vnpayCartItem.id],
+        paymentMethod: 'VNPAY',
+      })
+      .expect(201);
+
+    const body = response.body as CreateOrderResponse & {
+      paymentMethod: string;
+    };
+    expect(body.paymentMethod).toBe('VNPAY');
+  });
 });

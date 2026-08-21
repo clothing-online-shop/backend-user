@@ -5,12 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  OrderStatus,
-  PaymentProvider,
-  Prisma,
-  StockMovementType,
-} from '@prisma/client';
+import { OrderStatus, Prisma, StockMovementType } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { isProductAvailable } from '../../common/utils/product-availability.util';
@@ -54,12 +49,6 @@ export class OrdersService {
   ) {}
 
   async createOrder(userId: string, dto: CreateOrderDto) {
-    if (dto.paymentMethod !== PaymentProvider.COD) {
-      throw new BadRequestException(
-        'Hiện chỉ hỗ trợ thanh toán khi nhận hàng (COD).',
-      );
-    }
-
     const address = await this.prisma.address.findUnique({
       where: { id: dto.addressId },
       include: {
