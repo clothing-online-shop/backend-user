@@ -29,4 +29,30 @@ describe('orderConfirmationEmailTemplate', () => {
     expect(html).toContain('300.000');
     expect(html).toContain('150.000');
   });
+
+  it('map đúng nhãn tiếng Việt cho các paymentMethod khác COD', () => {
+    const cases: Array<[string, string]> = [
+      ['VNPAY', 'Chuyển khoản qua VNPay'],
+      ['MOMO', 'Ví MoMo'],
+      ['STRIPE', 'Thẻ quốc tế (Stripe)'],
+    ];
+    for (const [paymentMethod, expectedLabel] of cases) {
+      const { html } = orderConfirmationEmailTemplate({
+        orderCode: 'DH20260821ABCDEF',
+        totalAmount: 150000,
+        shippingAddress: 'Nguyễn Văn A - 0900000000 - 123 Đường ABC',
+        paymentMethod,
+        items: [
+          {
+            productName: 'Áo thun basic',
+            size: 'M',
+            color: 'Đen',
+            quantity: 1,
+            priceAtPurchase: 150000,
+          },
+        ],
+      });
+      expect(html).toContain(expectedLabel);
+    }
+  });
 });

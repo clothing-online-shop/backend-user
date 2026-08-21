@@ -18,7 +18,8 @@ export class CreateOrderDto {
 
   @ApiProperty({
     enum: PaymentProvider,
-    description: 'Phương thức thanh toán — hiện chỉ hỗ trợ COD',
+    description:
+      'Phương thức thanh toán: COD (thanh toán khi nhận hàng), VNPAY (chuyển khoản qua VNPay), MOMO/STRIPE (thanh toán online). Chưa tích hợp cổng thanh toán thật — đơn được lưu với phương thức đã chọn, paymentStatus giữ mặc định UNPAID.',
   })
   @IsEnum(PaymentProvider)
   paymentMethod!: PaymentProvider;

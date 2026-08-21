@@ -73,11 +73,17 @@ export interface OrderConfirmationEmailData {
   items: OrderConfirmationEmailItem[];
 }
 
-// Chỉ hỗ trợ COD ở thời điểm này (xem PaymentProvider trong schema.prisma) — map trực
-// tiếp 1 giá trị, không cần bảng map nhiều phương thức cho tới khi có provider thứ 2.
+// Khớp các giá trị enum PaymentProvider trong schema.prisma (backend-cms) — giá trị lạ
+// (không map được) rơi về chính chuỗi gốc thay vì lỗi, để không chặn gửi email.
+const PAYMENT_METHOD_LABEL: Record<string, string> = {
+  COD: 'Thanh toán khi nhận hàng (COD)',
+  VNPAY: 'Chuyển khoản qua VNPay',
+  MOMO: 'Ví MoMo',
+  STRIPE: 'Thẻ quốc tế (Stripe)',
+};
+
 function paymentMethodLabel(paymentMethod: string): string {
-  if (paymentMethod === 'COD') return 'Thanh toán khi nhận hàng (COD)';
-  return paymentMethod;
+  return PAYMENT_METHOD_LABEL[paymentMethod] ?? paymentMethod;
 }
 
 export function orderConfirmationEmailTemplate(
