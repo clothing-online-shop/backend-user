@@ -353,7 +353,7 @@ export class OrdersService {
   // công. Không await ở call site (createOrder) để không làm chậm response chờ SMTP.
   private async sendConfirmationEmailBestEffort(
     userId: string,
-    order: { orderCode: string; totalAmount: Prisma.Decimal },
+    order: OrderWithItems,
   ): Promise<void> {
     try {
       const user = await this.prisma.user.findUniqueOrThrow({
@@ -363,6 +363,15 @@ export class OrdersService {
       await this.mail.sendOrderConfirmationEmail(user.email, {
         orderCode: order.orderCode,
         totalAmount: order.totalAmount.toNumber(),
+        shippingAddress: order.shippingAddress,
+        paymentMethod: order.paymentMethod,
+        items: order.items.map((item) => ({
+          productName: item.productName,
+          size: item.size,
+          color: item.color,
+          quantity: item.quantity,
+          priceAtPurchase: item.priceAtPurchase.toNumber(),
+        })),
       });
     } catch (err) {
       this.logger.warn(
