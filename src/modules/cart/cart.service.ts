@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { Cart, CartItem, Product, ProductVariant } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
-import { ProductStatus } from '../products/product-status.enum';
+import { isProductAvailable } from '../../common/utils/product-availability.util';
 import { AddCartItemDto } from './dto/add-cart-item.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
 import { MergeCartDto } from './dto/merge-cart.dto';
@@ -268,22 +268,6 @@ export class CartService {
 const cartInclude = {
   items: { include: { productVariant: { include: { product: true } } } },
 } as const;
-
-// Dùng chung cho addItem/mergeCart/validateCart — "khả dụng để mua" phải xét cả 2 điều
-// kiện: status ACTIVE VÀ chưa bị xóa mềm. Trước đây chỉ check status, bỏ sót isDelete: sản
-// phẩm bị admin xóa mềm bên backend-cms (ProductsService.remove() chỉ set isDelete: true,
-// không đổi status — xem products.service.ts) vẫn còn status ACTIVE, nên vẫn lọt qua các
-// check "!== ProductStatus.ACTIVE" cũ, để khách thêm/giữ được trong giỏ 1 sản phẩm đã biến
-// mất khỏi catalog.
-function isProductAvailable(
-  product: Pick<Product, 'status' | 'isDelete'>,
-): boolean {
-  // Product.status là Int thô ở tầng Prisma (không phải enum DB) — gán qua biến khai kiểu
-  // ProductStatus trước khi so sánh, khớp pattern đã dùng ở chỗ khác trong repo, để không
-  // dính lint no-unsafe-enum-comparison (so number thô với enum TS).
-  const status: ProductStatus = product.status;
-  return status === ProductStatus.ACTIVE && !product.isDelete;
-}
 
 // Logic quyết định tồn kho dùng chung giữa mergeCart (số lượng mong muốn = đã có + thêm
 // vào) và validateCart (số lượng mong muốn = đang có sẵn trong giỏ) — tránh 2 công thức
