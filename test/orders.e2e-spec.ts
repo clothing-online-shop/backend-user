@@ -38,6 +38,7 @@ describe('Orders (e2e)', () => {
   let cartId: string;
   let cartItemId: string;
   let token: string;
+  let createdOrderCode: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -221,6 +222,7 @@ describe('Orders (e2e)', () => {
     expect(body.items[0].priceAtPurchase).toBe(150000);
 
     const orderId = body.id;
+    createdOrderCode = body.orderCode;
 
     const variant = await prisma.productVariant.findUniqueOrThrow({
       where: { id: variantId },
@@ -255,6 +257,27 @@ describe('Orders (e2e)', () => {
         cartItemIds: [cartItemId],
         paymentMethod: 'COD',
       })
+      .expect(404);
+  });
+
+  it('GET /orders/:orderCode — trả đúng dữ liệu đơn vừa tạo', async () => {
+    const response = await request(app.getHttpServer())
+      .get(`/orders/${createdOrderCode}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = response.body as CreateOrderResponse;
+    expect(body.orderCode).toBe(createdOrderCode);
+    expect(body.status).toBe('PENDING');
+    expect(typeof body.totalAmount).toBe('number');
+    expect(body.totalAmount).toBe(300000);
+    expect(body.items).toHaveLength(1);
+  });
+
+  it('GET /orders/:orderCode — orderCode không tồn tại → 404', async () => {
+    await request(app.getHttpServer())
+      .get('/orders/DH-KHONG-TON-TAI')
+      .set('Authorization', `Bearer ${token}`)
       .expect(404);
   });
 });

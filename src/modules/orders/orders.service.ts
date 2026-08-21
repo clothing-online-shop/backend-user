@@ -259,6 +259,22 @@ export class OrdersService {
     throw new Error('unreachable');
   }
 
+  // Dùng cho trang cảm ơn/theo dõi đơn — cần đọc lại được bất kỳ lúc nào (refresh, quay
+  // lại, mở link đã lưu), không thể chỉ dựa vào response giữ trong state của POST /orders.
+  async getOrderByCode(userId: string, orderCode: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { orderCode },
+      include: { items: true },
+    });
+    // Không tìm thấy HOẶC không thuộc về user hiện tại → gộp chung 1 404, không phân biệt
+    // 2 case để tránh lộ thông tin tồn tại của mã đơn người khác — khớp pattern đã dùng
+    // trong createOrder() (check địa chỉ/cart item).
+    if (!order || order.userId !== userId) {
+      throw new NotFoundException('Không tìm thấy đơn hàng.');
+    }
+    return toOrderResponse(order);
+  }
+
   // SELECT ... FOR UPDATE khoá các dòng ProductVariant liên quan, sắp theo id tăng dần
   // (variantIds đã được sort trước khi gọi) — đảm bảo 2 đơn hàng chứa chung sản phẩm luôn
   // lock theo cùng 1 thứ tự, tránh deadlock. Cùng lý do đã áp dụng cho lockVariant() ở
@@ -337,7 +353,7 @@ export class OrdersService {
   // công. Không await ở call site (createOrder) để không làm chậm response chờ SMTP.
   private async sendConfirmationEmailBestEffort(
     userId: string,
-    order: { orderCode: string; totalAmount: Prisma.Decimal },
+    order: OrderWithItems,
   ): Promise<void> {
     try {
       const user = await this.prisma.user.findUniqueOrThrow({
@@ -347,6 +363,15 @@ export class OrdersService {
       await this.mail.sendOrderConfirmationEmail(user.email, {
         orderCode: order.orderCode,
         totalAmount: order.totalAmount.toNumber(),
+        shippingAddress: order.shippingAddress,
+        paymentMethod: order.paymentMethod,
+        items: order.items.map((item) => ({
+          productName: item.productName,
+          size: item.size,
+          color: item.color,
+          quantity: item.quantity,
+          priceAtPurchase: item.priceAtPurchase.toNumber(),
+        })),
       });
     } catch (err) {
       this.logger.warn(

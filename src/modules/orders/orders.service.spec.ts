@@ -729,3 +729,79 @@ describe('OrdersService.createOrder', () => {
     expect(addressFindUnique).not.toHaveBeenCalled();
   });
 });
+
+describe('OrdersService.getOrderByCode', () => {
+  function createGetOrderMocks() {
+    const orderFindUnique = jest.fn();
+    const prisma = {
+      order: { findUnique: orderFindUnique },
+    } as unknown as PrismaService;
+    const mail = {} as unknown as MailService;
+    return { prisma, mail, orderFindUnique };
+  }
+
+  function orderRow(
+    overrides: Partial<{ id: string; userId: string; orderCode: string }> = {},
+  ) {
+    return {
+      id: overrides.id ?? 'order-1',
+      userId: overrides.userId ?? 'user-1',
+      orderCode: overrides.orderCode ?? 'DH20260821ABCDEF',
+      status: 'PENDING',
+      totalAmount: new Prisma.Decimal('300000'),
+      shippingAddress:
+        'Nguyễn Văn A - 0900000000 - 123 Đường ABC, Phường 1, Quận 1, TP. Hồ Chí Minh',
+      paymentMethod: PaymentProvider.COD,
+      items: [
+        {
+          id: 'item-1',
+          productVariantId: 'variant-1',
+          productName: 'Áo thun basic',
+          variantSku: 'SKU-1',
+          size: 'M',
+          color: 'Đen',
+          thumbnail: null,
+          quantity: 2,
+          priceAtPurchase: new Prisma.Decimal('150000'),
+        },
+      ],
+    };
+  }
+
+  it('trả đúng đơn khi orderCode tồn tại và thuộc về user', async () => {
+    const { prisma, mail, orderFindUnique } = createGetOrderMocks();
+    orderFindUnique.mockResolvedValue(orderRow());
+
+    const service = new OrdersService(prisma, mail);
+    const result = await service.getOrderByCode('user-1', 'DH20260821ABCDEF');
+
+    expect(orderFindUnique).toHaveBeenCalledWith({
+      where: { orderCode: 'DH20260821ABCDEF' },
+      include: { items: true },
+    });
+    expect(result.orderCode).toBe('DH20260821ABCDEF');
+    expect(typeof result.totalAmount).toBe('number');
+    expect(result.totalAmount).toBe(300000);
+    expect(typeof result.items[0].priceAtPurchase).toBe('number');
+  });
+
+  it('không tìm thấy orderCode → NotFoundException', async () => {
+    const { prisma, mail, orderFindUnique } = createGetOrderMocks();
+    orderFindUnique.mockResolvedValue(null);
+
+    const service = new OrdersService(prisma, mail);
+    await expect(
+      service.getOrderByCode('user-1', 'DH-NOT-EXIST'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('orderCode tồn tại nhưng thuộc về user khác → NotFoundException', async () => {
+    const { prisma, mail, orderFindUnique } = createGetOrderMocks();
+    orderFindUnique.mockResolvedValue(orderRow({ userId: 'user-2' }));
+
+    const service = new OrdersService(prisma, mail);
+    await expect(
+      service.getOrderByCode('user-1', 'DH20260821ABCDEF'),
+    ).rejects.toThrow(NotFoundException);
+  });
+});

@@ -6,6 +6,7 @@ import {
   otpEmailTemplate,
   passwordResetEmailTemplate,
   welcomeEmailTemplate,
+  type OrderConfirmationEmailData,
 } from './templates/email.templates';
 
 @Injectable()
@@ -56,7 +57,7 @@ export class MailService {
 
   async sendOrderConfirmationEmail(
     to: string,
-    order: { orderCode: string; totalAmount: number },
+    order: OrderConfirmationEmailData,
   ): Promise<void> {
     const { subject, html } = orderConfirmationEmailTemplate(order);
     await this.send(to, subject, html);

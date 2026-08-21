@@ -57,16 +57,60 @@ export function passwordResetEmailTemplate(resetLink: string): {
   };
 }
 
-export function orderConfirmationEmailTemplate(order: {
+export interface OrderConfirmationEmailItem {
+  productName: string;
+  size: string;
+  color: string;
+  quantity: number;
+  priceAtPurchase: number;
+}
+
+export interface OrderConfirmationEmailData {
   orderCode: string;
   totalAmount: number;
-}): { subject: string; html: string } {
+  shippingAddress: string;
+  paymentMethod: string;
+  items: OrderConfirmationEmailItem[];
+}
+
+// Chỉ hỗ trợ COD ở thời điểm này (xem PaymentProvider trong schema.prisma) — map trực
+// tiếp 1 giá trị, không cần bảng map nhiều phương thức cho tới khi có provider thứ 2.
+function paymentMethodLabel(paymentMethod: string): string {
+  if (paymentMethod === 'COD') return 'Thanh toán khi nhận hàng (COD)';
+  return paymentMethod;
+}
+
+export function orderConfirmationEmailTemplate(
+  order: OrderConfirmationEmailData,
+): { subject: string; html: string } {
+  const itemsHtml = order.items
+    .map(
+      (item) => `
+        <tr>
+          <td style="padding: 8px 0; border-bottom: 1px solid #eee;">
+            ${item.productName} (${item.size} / ${item.color})
+          </td>
+          <td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: center;">
+            x${item.quantity}
+          </td>
+          <td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">
+            ${item.priceAtPurchase.toLocaleString('vi-VN')}đ
+          </td>
+        </tr>`,
+    )
+    .join('');
+
   return {
     subject: `Xác nhận đơn hàng #${order.orderCode}`,
     html: layout(
       'Đặt hàng thành công',
       `<p>Cảm ơn bạn đã đặt hàng tại Clothing Shop.</p>
        <p>Mã đơn hàng: <strong>${order.orderCode}</strong></p>
+       <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+         ${itemsHtml}
+       </table>
+       <p>Địa chỉ giao hàng: <strong>${order.shippingAddress}</strong></p>
+       <p>Phương thức thanh toán: <strong>${paymentMethodLabel(order.paymentMethod)}</strong></p>
        <p>Tổng tiền: <strong>${order.totalAmount.toLocaleString('vi-VN')}đ</strong></p>
        <p>Chúng tôi sẽ xử lý đơn hàng của bạn trong thời gian sớm nhất.</p>`,
     ),

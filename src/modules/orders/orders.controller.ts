@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -23,5 +23,17 @@ export class OrdersController {
     @Body() dto: CreateOrderDto,
   ) {
     return this.ordersService.createOrder(user.id, dto);
+  }
+
+  @Get(':orderCode')
+  @ApiOperation({
+    summary:
+      'Lấy chi tiết đơn hàng theo mã đơn — dùng cho trang cảm ơn/theo dõi đơn, chỉ trả về nếu đơn thuộc về user hiện tại',
+  })
+  getOrderByCode(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('orderCode') orderCode: string,
+  ) {
+    return this.ordersService.getOrderByCode(user.id, orderCode);
   }
 }
