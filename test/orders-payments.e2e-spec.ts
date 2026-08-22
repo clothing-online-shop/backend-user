@@ -12,6 +12,9 @@ interface LoginResponseBody {
 interface AddressResponseBody {
   id: string;
 }
+interface CartResponseBody {
+  items: { id: string }[];
+}
 interface OrderResponseBody {
   id: string;
   orderCode: string;
@@ -157,11 +160,12 @@ describe('Orders + Payments (bank transfer happy path, e2e)', () => {
   });
 
   it('thêm giỏ hàng, tạo địa chỉ, tạo đơn, khởi tạo chuyển khoản', async () => {
-    await request(app.getHttpServer())
+    const cartRes = await request(app.getHttpServer())
       .post('/cart/items')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ productVariantId: ids.variantId, quantity: 2 })
       .expect(201);
+    const cartItemId = (cartRes.body as CartResponseBody).items[0].id;
 
     const addressRes = await request(app.getHttpServer())
       .post('/addresses')
@@ -180,7 +184,11 @@ describe('Orders + Payments (bank transfer happy path, e2e)', () => {
     const orderRes = await request(app.getHttpServer())
       .post('/orders')
       .set('Authorization', `Bearer ${accessToken}`)
-      .send({ addressId: ids.addressId, paymentMethod: 'BANK_TRANSFER' })
+      .send({
+        addressId: ids.addressId,
+        cartItemIds: [cartItemId],
+        paymentMethod: 'BANK_TRANSFER',
+      })
       .expect(201);
     const orderBody = orderRes.body as OrderResponseBody;
     ids.orderId = orderBody.id;

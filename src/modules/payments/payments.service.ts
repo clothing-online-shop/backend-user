@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   Order,
@@ -10,8 +15,6 @@ import {
 import { PrismaService } from '../../config/prisma.service';
 import { VnpayClient } from '../../common/vnpay/vnpay-client.service';
 import { verifySignature } from '../../common/vnpay/vnpay-signature.util';
-import { OrdersService } from '../orders/orders.service';
-import { CheckoutPaymentMethod } from '../orders/dto/create-order.dto';
 
 export interface VnpayReturnResult {
   success: boolean;
@@ -33,7 +36,6 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly vnpayClient: VnpayClient,
-    private readonly ordersService: OrdersService,
   ) {}
 
   // Gọi lại được nhiều lần cho cùng 1 đơn (thanh toán lại — task 2, hoặc đổi từ chuyển
@@ -43,7 +45,7 @@ export class PaymentsService {
     orderId: string,
     ipAddr: string,
   ): Promise<{ paymentUrl: string }> {
-    const order = await this.ordersService.findOwnedOrder(userId, orderId);
+    const order = await this.findOwnedOrder(userId, orderId);
     this.assertNotYetPaid(order);
 
     const txnRef = `${order.orderCode}-${Date.now().toString(36)}`;
@@ -60,7 +62,7 @@ export class PaymentsService {
     const paymentUrl = this.vnpayClient.buildPaymentUrl({
       orderCode: order.orderCode,
       txnRef,
-      amount: order.totalAmount,
+      amount: order.totalAmount.toNumber(),
       ipAddr,
     });
     return { paymentUrl };
@@ -76,13 +78,13 @@ export class PaymentsService {
     transferContent: string;
     amount: number;
   }> {
-    const order = await this.ordersService.findOwnedOrder(userId, orderId);
+    const order = await this.findOwnedOrder(userId, orderId);
     this.assertNotYetPaid(order);
 
     await this.prisma.$transaction([
       this.prisma.order.update({
         where: { id: order.id },
-        data: { paymentMethod: CheckoutPaymentMethod.BANK_TRANSFER },
+        data: { paymentMethod: PaymentProvider.BANK_TRANSFER },
       }),
       this.prisma.paymentTransaction.create({
         data: {
@@ -99,7 +101,7 @@ export class PaymentsService {
       bankAccountName: this.config.get<string>('BANK_ACCOUNT_NAME', ''),
       bankName: this.config.get<string>('BANK_NAME', ''),
       transferContent: order.orderCode,
-      amount: order.totalAmount,
+      amount: order.totalAmount.toNumber(),
     };
   }
 
@@ -183,6 +185,24 @@ export class PaymentsService {
       return { RspCode: '02', Message: 'Order already confirmed' };
     }
     return { RspCode: '00', Message: 'Confirm Success' };
+  }
+
+  // Payments module tự truy vấn Order trực tiếp (không phụ thuộc OrdersService của module
+  // orders) — chỉ cần đúng 2 việc: kiểm tra sở hữu + đọc totalAmount/orderCode/paymentStatus,
+  // không cần các field snapshot (productName/variantSku...) mà OrdersService.toOrderResponse()
+  // trả về, tách biệt giúp payments module không phải đổi theo mỗi khi orders module đổi cấu
+  // trúc response.
+  private async findOwnedOrder(
+    userId: string,
+    orderId: string,
+  ): Promise<Order> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+    if (!order || order.userId !== userId) {
+      throw new NotFoundException('Không tìm thấy đơn hàng.');
+    }
+    return order;
   }
 
   private assertNotYetPaid(order: Pick<Order, 'paymentStatus'>): void {
