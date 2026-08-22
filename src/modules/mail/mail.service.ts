@@ -3,10 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { createTransport, Transporter } from 'nodemailer';
 import {
   orderConfirmationEmailTemplate,
+  orderStatusUpdateEmailTemplate,
   otpEmailTemplate,
   passwordResetEmailTemplate,
   welcomeEmailTemplate,
   type OrderConfirmationEmailData,
+  type OrderStatusUpdateEmailData,
 } from './templates/email.templates';
 
 @Injectable()
@@ -60,6 +62,14 @@ export class MailService {
     order: OrderConfirmationEmailData,
   ): Promise<void> {
     const { subject, html } = orderConfirmationEmailTemplate(order);
+    await this.send(to, subject, html);
+  }
+
+  async sendOrderStatusUpdateEmail(
+    to: string,
+    data: OrderStatusUpdateEmailData,
+  ): Promise<void> {
+    const { subject, html } = orderStatusUpdateEmailTemplate(data);
     await this.send(to, subject, html);
   }
 

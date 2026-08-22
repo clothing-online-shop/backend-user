@@ -843,3 +843,68 @@ describe('OrdersService.getOrderByCode', () => {
     ).rejects.toThrow(NotFoundException);
   });
 });
+
+describe('OrdersService.notifyStatusChange', () => {
+  function createNotifyMocks() {
+    const orderFindUnique = jest.fn();
+    const prisma = {
+      order: { findUnique: orderFindUnique },
+    } as unknown as PrismaService;
+    const sendOrderStatusUpdateEmail = jest.fn().mockResolvedValue(undefined);
+    const mail = { sendOrderStatusUpdateEmail } as unknown as MailService;
+    return { prisma, mail, orderFindUnique, sendOrderStatusUpdateEmail };
+  }
+
+  it('order tồn tại → tra đúng email/tên khách theo orderCode rồi gọi MailService', async () => {
+    const { prisma, mail, orderFindUnique, sendOrderStatusUpdateEmail } =
+      createNotifyMocks();
+    orderFindUnique.mockResolvedValue({
+      orderCode: 'DH20260821ABCDEF',
+      user: { email: 'khach@example.com', fullName: 'Nguyễn Văn A' },
+    });
+    const service = new OrdersService(prisma, mail);
+
+    await service.notifyStatusChange('DH20260821ABCDEF', 'PACKING', null);
+
+    expect(orderFindUnique).toHaveBeenCalledWith({
+      where: { orderCode: 'DH20260821ABCDEF' },
+      include: { user: { select: { email: true, fullName: true } } },
+    });
+    expect(sendOrderStatusUpdateEmail).toHaveBeenCalledWith(
+      'khach@example.com',
+      {
+        orderCode: 'DH20260821ABCDEF',
+        customerName: 'Nguyễn Văn A',
+        status: 'PACKING',
+        note: null,
+      },
+    );
+  });
+
+  it('orderCode không tồn tại → NotFoundException, không gọi MailService', async () => {
+    const { prisma, mail, orderFindUnique, sendOrderStatusUpdateEmail } =
+      createNotifyMocks();
+    orderFindUnique.mockResolvedValue(null);
+    const service = new OrdersService(prisma, mail);
+
+    await expect(
+      service.notifyStatusChange('DH-NOT-EXIST', 'PACKING', null),
+    ).rejects.toThrow(NotFoundException);
+    expect(sendOrderStatusUpdateEmail).not.toHaveBeenCalled();
+  });
+
+  it('MailService gửi lỗi → không throw ra ngoài (best-effort, chỉ log warn)', async () => {
+    const { prisma, mail, orderFindUnique, sendOrderStatusUpdateEmail } =
+      createNotifyMocks();
+    orderFindUnique.mockResolvedValue({
+      orderCode: 'DH20260821ABCDEF',
+      user: { email: 'khach@example.com', fullName: 'Nguyễn Văn A' },
+    });
+    sendOrderStatusUpdateEmail.mockRejectedValue(new Error('SMTP lỗi'));
+    const service = new OrdersService(prisma, mail);
+
+    await expect(
+      service.notifyStatusChange('DH20260821ABCDEF', 'CANCELLED', 'Khách đổi ý'),
+    ).resolves.toBeUndefined();
+  });
+});
