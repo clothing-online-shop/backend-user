@@ -1,5 +1,6 @@
 // Template email cơ bản dạng HTML inline — đủ dùng cho sprint đầu, có thể thay
 // bằng engine template (Handlebars/MJML) sau nếu cần thiết kế phức tạp hơn.
+import type { OrderStatus } from '@prisma/client';
 
 function layout(title: string, bodyHtml: string): string {
   return `
@@ -119,6 +120,41 @@ export function orderConfirmationEmailTemplate(
        <p>Phương thức thanh toán: <strong>${paymentMethodLabel(order.paymentMethod)}</strong></p>
        <p>Tổng tiền: <strong>${order.totalAmount.toLocaleString('vi-VN')}đ</strong></p>
        <p>Chúng tôi sẽ xử lý đơn hàng của bạn trong thời gian sớm nhất.</p>`,
+    ),
+  };
+}
+
+// Khớp enum OrderStatus (schema.prisma, backend-cms) — dùng khi backend-cms gọi
+// POST /internal/orders/:orderCode/status-notification mỗi lần admin đổi trạng thái đơn.
+const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
+  PENDING: 'Chờ xác nhận',
+  CONFIRMED: 'Đã xác nhận',
+  PACKING: 'Đang đóng gói',
+  HANDED_OVER: 'Đã bàn giao vận chuyển',
+  SHIPPING: 'Đang giao',
+  COMPLETED: 'Hoàn tất',
+  CANCELLED: 'Đã hủy',
+};
+
+export interface OrderStatusUpdateEmailData {
+  orderCode: string;
+  customerName: string;
+  status: OrderStatus;
+  note?: string | null;
+}
+
+export function orderStatusUpdateEmailTemplate(
+  data: OrderStatusUpdateEmailData,
+): { subject: string; html: string } {
+  const statusLabel = ORDER_STATUS_LABEL[data.status];
+  return {
+    subject: `Cập nhật đơn hàng #${data.orderCode}: ${statusLabel}`,
+    html: layout(
+      'Cập nhật đơn hàng',
+      `<p>Xin chào <strong>${data.customerName}</strong>,</p>
+       <p>Đơn hàng <strong>#${data.orderCode}</strong> của bạn vừa được cập nhật trạng thái:</p>
+       <p style="font-size: 18px; font-weight: bold;">${statusLabel}</p>
+       ${data.note ? `<p>Lý do: ${data.note}</p>` : ''}`,
     ),
   };
 }

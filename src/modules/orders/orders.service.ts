@@ -338,6 +338,41 @@ export class OrdersService {
     return variant;
   }
 
+  // Gọi bởi backend-cms qua POST /internal/orders/:orderCode/status-notification mỗi lần
+  // admin đổi trạng thái đơn — tự tra email/tên khách theo orderCode (không nhận trực tiếp
+  // từ backend-cms) để tránh phụ thuộc caller cung cấp đúng địa chỉ gửi, xem spec
+  // docs/superpowers/specs/2026-08-22-order-status-flow-email-notification-design.md
+  // (backend-cms). NotFoundException nếu orderCode sai — đây là lỗi thật cần biết (khác gửi
+  // mail thất bại, chỉ log warn best-effort như sendConfirmationEmailBestEffort bên dưới).
+  async notifyStatusChange(
+    orderCode: string,
+    status: OrderStatus,
+    note: string | null,
+  ): Promise<void> {
+    const order = await this.prisma.order.findUnique({
+      where: { orderCode },
+      include: { user: { select: { email: true, fullName: true } } },
+    });
+    if (!order) {
+      throw new NotFoundException('Không tìm thấy đơn hàng.');
+    }
+
+    try {
+      await this.mail.sendOrderStatusUpdateEmail(order.user.email, {
+        orderCode: order.orderCode,
+        customerName: order.user.fullName,
+        status,
+        note,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Không gửi được email báo trạng thái đơn ${orderCode}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
   // Best-effort — gửi mail xác nhận không phải điều kiện để coi đơn hàng đã tạo thành
   // công. Không await ở call site (createOrder) để không làm chậm response chờ SMTP.
   private async sendConfirmationEmailBestEffort(
