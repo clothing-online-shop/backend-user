@@ -904,7 +904,11 @@ describe('OrdersService.notifyStatusChange', () => {
     const service = new OrdersService(prisma, mail);
 
     await expect(
-      service.notifyStatusChange('DH20260821ABCDEF', 'CANCELLED', 'Khách đổi ý'),
+      service.notifyStatusChange(
+        'DH20260821ABCDEF',
+        'CANCELLED',
+        'Khách đổi ý',
+      ),
     ).resolves.toBeUndefined();
   });
 });
