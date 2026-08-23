@@ -1,15 +1,21 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { OrderStatus, Prisma, StockMovementType } from '@prisma/client';
+import {
+  OrderStatus,
+  Prisma,
+  StockMovementType,
+  Voucher,
+} from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { isProductAvailable } from '../../common/utils/product-availability.util';
 import { generateOrderCode } from '../../common/utils/order-code.util';
+import { resolveOwnedCartItems } from '../../common/utils/cart-items.util';
+import { VouchersService } from '../vouchers/vouchers.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 
 const ORDER_CODE_MAX_RETRIES = 3;
@@ -46,6 +52,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly vouchers: VouchersService,
   ) {}
 
   async createOrder(userId: string, dto: CreateOrderDto) {
@@ -61,29 +68,20 @@ export class OrdersService {
       throw new NotFoundException('Không tìm thấy địa chỉ.');
     }
 
-    const cartItems = await this.prisma.cartItem.findMany({
-      where: { id: { in: dto.cartItemIds } },
-      include: {
-        cart: true,
-        productVariant: { include: { product: true } },
-      },
-    });
-    if (
-      cartItems.length !== dto.cartItemIds.length ||
-      cartItems.some((item) => item.cart.userId !== userId)
-    ) {
-      throw new NotFoundException('Không tìm thấy sản phẩm trong giỏ hàng.');
-    }
+    const { cartItems, subtotal: preflightSubtotal } =
+      await resolveOwnedCartItems(this.prisma, userId, dto.cartItemIds);
 
-    const unavailable = cartItems.filter(
-      (item) =>
-        !isProductAvailable(item.productVariant.product) ||
-        item.quantity > item.productVariant.stockQuantity,
-    );
-    if (unavailable.length > 0) {
-      const names = unavailable.map((item) => item.productVariant.product.name);
-      throw new BadRequestException(
-        `Sản phẩm không khả dụng hoặc không đủ hàng: ${names.join(', ')}.`,
+    // Preflight ngoài transaction — fail sớm với lỗi rõ ràng trước khi khoá dòng tồn kho,
+    // giống preflight isProductAvailable/tồn kho ở trên. Không phải chốt chặn cuối cùng: giá/
+    // usedCount có thể đổi giữa đây và lúc vào transaction, nên validateAndCompute() được gọi
+    // lại lần nữa bên trong transaction (dùng tx + subtotal tính từ giá đã FOR UPDATE) ngay
+    // trước khi redeem() — đó mới là nơi quyết định discountAmount thật sự lưu vào đơn.
+    if (dto.voucherCode) {
+      await this.vouchers.validateAndCompute(
+        this.prisma,
+        userId,
+        dto.voucherCode,
+        preflightSubtotal,
       );
     }
 
@@ -160,6 +158,23 @@ export class OrdersService {
             };
           });
 
+          // Tính lại discountAmount ở đây (không dùng kết quả preflight phía trên) — subtotal
+          // dùng ở đây (totalAmount) đến từ giá đã FOR UPDATE, và validateAndCompute() bên
+          // trong tx cũng đọc usedCount mới nhất, tránh áp mã dựa trên dữ liệu đã lỗi thời nếu
+          // có request khác xen giữa preflight và đây.
+          let discountAmount = new Prisma.Decimal(0);
+          let voucher: Voucher | null = null;
+          if (dto.voucherCode) {
+            const result = await this.vouchers.validateAndCompute(
+              tx,
+              userId,
+              dto.voucherCode,
+              totalAmount,
+            );
+            voucher = result.voucher;
+            discountAmount = result.discountAmount;
+          }
+
           for (const item of cartItems) {
             await tx.stockMovement.create({
               data: {
@@ -180,13 +195,29 @@ export class OrdersService {
               userId,
               orderCode,
               status: OrderStatus.PENDING,
-              totalAmount,
+              totalAmount: totalAmount.sub(discountAmount),
+              discountAmount,
+              voucherId: voucher?.id,
               shippingAddress,
               paymentMethod: dto.paymentMethod,
               items: { create: itemsData },
             },
             include: { items: true },
           });
+
+          if (voucher) {
+            // Trừ lượt dùng nguyên tử + ghi VoucherRedemption — phải làm SAU khi Order đã có
+            // id (redeem() cần orderId để ghi audit), và cùng transaction với toàn bộ phần
+            // trên để nếu bước này throw (hết lượt do race), mọi thứ (trừ kho, tạo Order...)
+            // đều rollback theo, không để đơn được tạo mà voucher không được ghi nhận đã dùng.
+            await this.vouchers.redeem(
+              tx,
+              voucher,
+              userId,
+              created.id,
+              discountAmount,
+            );
+          }
 
           await tx.orderStatusHistory.create({
             data: {
@@ -416,6 +447,7 @@ function toOrderResponse(order: OrderWithItems) {
   return {
     ...order,
     totalAmount: order.totalAmount.toNumber(),
+    discountAmount: order.discountAmount.toNumber(),
     items: order.items.map((item) => ({
       ...item,
       priceAtPurchase: item.priceAtPurchase.toNumber(),
