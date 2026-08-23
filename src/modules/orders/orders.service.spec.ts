@@ -1,10 +1,22 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PaymentProvider, Prisma } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../../config/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { VouchersService } from '../vouchers/vouchers.service';
 import { ProductStatus } from '../products/product-status.enum';
 import { CreateOrderDto } from './dto/create-order.dto';
+
+// Dùng ở cả 3 describe (createOrder không dùng voucher, getOrderByCode, notifyStatusChange) —
+// những chỗ đó không gọi tới VouchersService nhưng constructor bắt buộc truyền, không cần mock
+// hành vi vì code không bao giờ đụng tới field nào của nó trong các luồng đó.
+function noopVouchers(): VouchersService {
+  return {} as unknown as VouchersService;
+}
 
 function createMocks() {
   const addressFindUnique = jest.fn();
@@ -43,9 +55,22 @@ function createMocks() {
   const sendOrderConfirmationEmail = jest.fn().mockResolvedValue(undefined);
   const mail = { sendOrderConfirmationEmail } as unknown as MailService;
 
+  // Chỉ dùng khi dto.voucherCode có giá trị (test riêng cho voucher) — các test không dùng
+  // voucher không cấu hình return value cho 2 hàm này, code cũng không bao giờ gọi tới vì
+  // createOrder() chỉ gọi khi dto.voucherCode truthy.
+  const validateAndCompute = jest.fn();
+  const redeem = jest.fn().mockResolvedValue(undefined);
+  const vouchers = {
+    validateAndCompute,
+    redeem,
+  } as unknown as VouchersService;
+
   return {
     prisma,
     mail,
+    vouchers,
+    validateAndCompute,
+    redeem,
     tx,
     addressFindUnique,
     cartItemFindMany,
@@ -82,6 +107,7 @@ function cartItem(overrides: {
   cartUserId?: string;
   status?: ProductStatus;
   stockQuantity?: number;
+  price?: number;
 }) {
   return {
     id: overrides.id,
@@ -91,6 +117,10 @@ function cartItem(overrides: {
     productVariant: {
       id: overrides.productVariantId,
       stockQuantity: overrides.stockQuantity ?? 10,
+      // resolveOwnedCartItems() (preflight, ngoài transaction) đọc giá từ đây để tính subtotal
+      // ước tính — số cuối cùng lưu vào Order vẫn tính lại trong transaction từ giá đã FOR
+      // UPDATE (lockedRow()/queryRaw mock bên dưới), 2 nguồn giá này độc lập với nhau.
+      price: new Prisma.Decimal(overrides.price ?? 150000),
       product: {
         name: 'Áo thun basic',
         status: overrides.status ?? ProductStatus.ACTIVE,
@@ -131,6 +161,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -167,10 +198,11 @@ describe('OrdersService.createOrder', () => {
       id: 'order-1',
       orderCode: 'DH20260820ABC123',
       totalAmount: new Prisma.Decimal(300000),
+      discountAmount: new Prisma.Decimal(0),
       items: [],
     });
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
     const result = await service.createOrder('user-1', baseDto());
 
     expect(result.id).toBe('order-1');
@@ -234,6 +266,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -263,6 +296,7 @@ describe('OrdersService.createOrder', () => {
       id: 'order-1',
       orderCode: 'DH20260820ABC123',
       totalAmount: new Prisma.Decimal(300000),
+      discountAmount: new Prisma.Decimal(0),
       items: [],
     });
     // Mô phỏng: đúng lúc transaction đang chạy, khách gọi PATCH /cart/items/item-1 đổi quantity
@@ -271,7 +305,7 @@ describe('OrdersService.createOrder', () => {
     // count trả về 0.
     cartItemDeleteMany.mockResolvedValue({ count: 0 });
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       ConflictException,
@@ -288,6 +322,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -320,7 +355,7 @@ describe('OrdersService.createOrder', () => {
       },
     ]);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       ConflictException,
@@ -333,6 +368,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -369,13 +405,14 @@ describe('OrdersService.createOrder', () => {
       id: 'order-1',
       orderCode: 'DH20260820ABC123',
       totalAmount: new Prisma.Decimal(300000),
+      discountAmount: new Prisma.Decimal(0),
       items: [],
     });
     // Mô phỏng phía thua trong race: cart item đã bị request thắng xoá trước, nên deleteMany
     // ở request này không xoá được dòng nào dù dto.cartItemIds có 1 phần tử.
     cartItemDeleteMany.mockResolvedValue({ count: 0 });
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       ConflictException,
@@ -389,10 +426,10 @@ describe('OrdersService.createOrder', () => {
   });
 
   it('địa chỉ không thuộc về user → NotFoundException', async () => {
-    const { prisma, mail, addressFindUnique } = createMocks();
+    const { prisma, mail, vouchers, addressFindUnique } = createMocks();
     addressFindUnique.mockResolvedValue(address({ userId: 'other-user' }));
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       NotFoundException,
@@ -400,10 +437,10 @@ describe('OrdersService.createOrder', () => {
   });
 
   it('addressId không tồn tại → NotFoundException', async () => {
-    const { prisma, mail, addressFindUnique } = createMocks();
+    const { prisma, mail, vouchers, addressFindUnique } = createMocks();
     addressFindUnique.mockResolvedValue(null);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       NotFoundException,
@@ -411,7 +448,8 @@ describe('OrdersService.createOrder', () => {
   });
 
   it('cartItemIds chứa dòng không thuộc giỏ hàng của user → NotFoundException', async () => {
-    const { prisma, mail, addressFindUnique, cartItemFindMany } = createMocks();
+    const { prisma, mail, vouchers, addressFindUnique, cartItemFindMany } =
+      createMocks();
     addressFindUnique.mockResolvedValue(address());
     cartItemFindMany.mockResolvedValue([
       cartItem({
@@ -422,7 +460,7 @@ describe('OrdersService.createOrder', () => {
       }),
     ]);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       NotFoundException,
@@ -430,11 +468,12 @@ describe('OrdersService.createOrder', () => {
   });
 
   it('cartItemIds chứa id không tồn tại (giỏ hàng trả về ít hơn số id gửi lên) → NotFoundException', async () => {
-    const { prisma, mail, addressFindUnique, cartItemFindMany } = createMocks();
+    const { prisma, mail, vouchers, addressFindUnique, cartItemFindMany } =
+      createMocks();
     addressFindUnique.mockResolvedValue(address());
     cartItemFindMany.mockResolvedValue([]);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       NotFoundException,
@@ -442,7 +481,8 @@ describe('OrdersService.createOrder', () => {
   });
 
   it('sản phẩm ngừng bán hoặc không đủ hàng ở bước preflight → BadRequestException liệt kê đúng tên sản phẩm', async () => {
-    const { prisma, mail, addressFindUnique, cartItemFindMany } = createMocks();
+    const { prisma, mail, vouchers, addressFindUnique, cartItemFindMany } =
+      createMocks();
     addressFindUnique.mockResolvedValue(address());
     cartItemFindMany.mockResolvedValue([
       cartItem({
@@ -459,7 +499,7 @@ describe('OrdersService.createOrder', () => {
       }),
     ]);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(
       service.createOrder(
@@ -475,6 +515,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -506,7 +547,7 @@ describe('OrdersService.createOrder', () => {
       },
     ]);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       ConflictException,
@@ -519,6 +560,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -561,7 +603,7 @@ describe('OrdersService.createOrder', () => {
       },
     ]);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(
       service.createOrder(
@@ -578,6 +620,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -615,7 +658,7 @@ describe('OrdersService.createOrder', () => {
       },
     ]);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(
       service.createOrder(
@@ -631,6 +674,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -661,10 +705,11 @@ describe('OrdersService.createOrder', () => {
       id: 'order-1',
       orderCode: 'DH20260820XYZ999',
       totalAmount: new Prisma.Decimal(150000),
+      discountAmount: new Prisma.Decimal(0),
       items: [],
     });
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
     const result = await service.createOrder('user-1', baseDto());
 
     expect(result.id).toBe('order-1');
@@ -675,6 +720,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -703,7 +749,7 @@ describe('OrdersService.createOrder', () => {
     });
     orderCreate.mockRejectedValue(collisionError);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(service.createOrder('user-1', baseDto())).rejects.toThrow(
       ConflictException,
@@ -715,6 +761,7 @@ describe('OrdersService.createOrder', () => {
     const {
       prisma,
       mail,
+      vouchers,
       addressFindUnique,
       cartItemFindMany,
       queryRaw,
@@ -747,10 +794,11 @@ describe('OrdersService.createOrder', () => {
       id: 'order-1',
       orderCode: 'DH20260821XYZ789',
       totalAmount: new Prisma.Decimal(150000),
+      discountAmount: new Prisma.Decimal(0),
       items: [],
     });
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
     const result = await service.createOrder(
       'user-1',
       baseDto({ paymentMethod: PaymentProvider.VNPAY }),
@@ -766,6 +814,169 @@ describe('OrdersService.createOrder', () => {
       }),
     );
   });
+
+  it('áp voucher hợp lệ khi đặt hàng → trừ discountAmount vào totalAmount, redeem() được gọi đúng tham số', async () => {
+    const {
+      prisma,
+      mail,
+      vouchers,
+      validateAndCompute,
+      redeem,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+      productFindMany,
+      orderCreate,
+    } = createMocks();
+    addressFindUnique.mockResolvedValue(address());
+    cartItemFindMany.mockResolvedValue([
+      cartItem({ id: 'item-1', productVariantId: 'variant-1', quantity: 2 }),
+    ]);
+    queryRaw.mockResolvedValue([
+      lockedRow({
+        id: 'variant-1',
+        stockQuantity: 10,
+        price: '150000',
+        productId: 'product-1',
+      }),
+    ]);
+    productFindMany.mockResolvedValue([
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
+    ]);
+    const voucherRow = { id: 'voucher-1', code: 'SUMMER2026' };
+    // validateAndCompute() được gọi 2 lần trong createOrder (preflight ngoài tx + lần chốt
+    // trong tx) — cả 2 lần đều mock cùng kết quả ở đây vì test không cần phân biệt riêng.
+    validateAndCompute.mockResolvedValue({
+      voucher: voucherRow,
+      discountAmount: new Prisma.Decimal(30000),
+    });
+    orderCreate.mockResolvedValue({
+      id: 'order-1',
+      orderCode: 'DH20260822VC0001',
+      totalAmount: new Prisma.Decimal(270000),
+      discountAmount: new Prisma.Decimal(30000),
+      items: [],
+    });
+
+    const service = new OrdersService(prisma, mail, vouchers);
+    const result = await service.createOrder(
+      'user-1',
+      baseDto({ voucherCode: 'summer2026' }),
+    );
+
+    expect(result.id).toBe('order-1');
+    // totalAmount từ giá khoá (150000 * 2 = 300000) trừ discountAmount (30000) = 270000 — không
+    // dùng subtotal ước tính ở preflight để trừ. So sánh qua .toNumber() thay vì so trực tiếp 2
+    // instance Prisma.Decimal — instance thực tế được tạo bằng .sub() nên field nội bộ có thể
+    // khác biểu diễn dù cùng giá trị, .toNumber() mới là điều thực sự cần đúng.
+    const orderCreateCalls = orderCreate.mock.calls as unknown as {
+      data: Record<string, unknown>;
+    }[][];
+    const actualData = orderCreateCalls[0][0].data;
+    expect((actualData.totalAmount as Prisma.Decimal).toNumber()).toBe(270000);
+    expect((actualData.discountAmount as Prisma.Decimal).toNumber()).toBe(
+      30000,
+    );
+    expect(actualData.voucherId).toBe('voucher-1');
+    expect(redeem).toHaveBeenCalledWith(
+      expect.anything(),
+      voucherRow,
+      'user-1',
+      'order-1',
+      new Prisma.Decimal(30000),
+    );
+  });
+
+  it('voucher vừa hết lượt ngay lúc chốt đơn (race — redeem() báo count=0) → ConflictException, rollback toàn bộ (không phải đơn đã tạo thành công)', async () => {
+    const {
+      prisma,
+      mail,
+      vouchers,
+      validateAndCompute,
+      redeem,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+      productFindMany,
+      orderCreate,
+    } = createMocks();
+    addressFindUnique.mockResolvedValue(address());
+    cartItemFindMany.mockResolvedValue([
+      cartItem({ id: 'item-1', productVariantId: 'variant-1', quantity: 1 }),
+    ]);
+    queryRaw.mockResolvedValue([
+      lockedRow({ id: 'variant-1', stockQuantity: 10, productId: 'product-1' }),
+    ]);
+    productFindMany.mockResolvedValue([
+      {
+        id: 'product-1',
+        name: 'Áo thun basic',
+        thumbnail: null,
+        status: ProductStatus.ACTIVE,
+        isDelete: false,
+      },
+    ]);
+    validateAndCompute.mockResolvedValue({
+      voucher: { id: 'voucher-1', code: 'LIMIT1' },
+      discountAmount: new Prisma.Decimal(10000),
+    });
+    orderCreate.mockResolvedValue({
+      id: 'order-1',
+      orderCode: 'DH20260822VC0002',
+      totalAmount: new Prisma.Decimal(140000),
+      discountAmount: new Prisma.Decimal(10000),
+      items: [],
+    });
+    // Request khác đã dùng nốt lượt cuối cùng của voucher đúng lúc giữa validateAndCompute()
+    // (đọc lạc quan, thấy còn lượt) và redeem() (updateMany điều kiện usedCount<usageLimit) —
+    // xem comment redeem() trong vouchers.service.ts.
+    redeem.mockRejectedValue(
+      new ConflictException('Voucher vừa hết lượt sử dụng, vui lòng thử lại.'),
+    );
+
+    const service = new OrdersService(prisma, mail, vouchers);
+
+    await expect(
+      service.createOrder('user-1', baseDto({ voucherCode: 'LIMIT1' })),
+    ).rejects.toThrow(ConflictException);
+    // order.create đã chạy trước redeem() trong cùng lần thử, nhưng vì cùng nằm trong 1
+    // $transaction callback nên throw ở redeem() khiến Prisma rollback hết — giống pattern các
+    // test rollback khác trong file này (double-click, hết hàng trong transaction...).
+    expect(orderCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('mã voucher không hợp lệ (vd hết hạn) bị từ chối ngay ở preflight, trước khi khoá tồn kho', async () => {
+    const {
+      prisma,
+      mail,
+      vouchers,
+      validateAndCompute,
+      addressFindUnique,
+      cartItemFindMany,
+      queryRaw,
+    } = createMocks();
+    addressFindUnique.mockResolvedValue(address());
+    cartItemFindMany.mockResolvedValue([
+      cartItem({ id: 'item-1', productVariantId: 'variant-1', quantity: 1 }),
+    ]);
+    validateAndCompute.mockRejectedValue(
+      new BadRequestException('Voucher đã hết hạn sử dụng.'),
+    );
+
+    const service = new OrdersService(prisma, mail, vouchers);
+
+    await expect(
+      service.createOrder('user-1', baseDto({ voucherCode: 'EXPIRED1' })),
+    ).rejects.toThrow('Voucher đã hết hạn sử dụng.');
+    // Bị chặn ở preflight (ngoài transaction) — chưa từng khoá dòng tồn kho (FOR UPDATE).
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
 });
 
 describe('OrdersService.getOrderByCode', () => {
@@ -775,7 +986,7 @@ describe('OrdersService.getOrderByCode', () => {
       order: { findUnique: orderFindUnique },
     } as unknown as PrismaService;
     const mail = {} as unknown as MailService;
-    return { prisma, mail, orderFindUnique };
+    return { prisma, mail, vouchers: noopVouchers(), orderFindUnique };
   }
 
   function orderRow(
@@ -787,6 +998,7 @@ describe('OrdersService.getOrderByCode', () => {
       orderCode: overrides.orderCode ?? 'DH20260821ABCDEF',
       status: 'PENDING',
       totalAmount: new Prisma.Decimal('300000'),
+      discountAmount: new Prisma.Decimal(0),
       shippingAddress:
         'Nguyễn Văn A - 0900000000 - 123 Đường ABC, Phường 1, Quận 1, TP. Hồ Chí Minh',
       paymentMethod: PaymentProvider.COD,
@@ -807,10 +1019,10 @@ describe('OrdersService.getOrderByCode', () => {
   }
 
   it('trả đúng đơn khi orderCode tồn tại và thuộc về user', async () => {
-    const { prisma, mail, orderFindUnique } = createGetOrderMocks();
+    const { prisma, mail, vouchers, orderFindUnique } = createGetOrderMocks();
     orderFindUnique.mockResolvedValue(orderRow());
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
     const result = await service.getOrderByCode('user-1', 'DH20260821ABCDEF');
 
     expect(orderFindUnique).toHaveBeenCalledWith({
@@ -824,20 +1036,20 @@ describe('OrdersService.getOrderByCode', () => {
   });
 
   it('không tìm thấy orderCode → NotFoundException', async () => {
-    const { prisma, mail, orderFindUnique } = createGetOrderMocks();
+    const { prisma, mail, vouchers, orderFindUnique } = createGetOrderMocks();
     orderFindUnique.mockResolvedValue(null);
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
     await expect(
       service.getOrderByCode('user-1', 'DH-NOT-EXIST'),
     ).rejects.toThrow(NotFoundException);
   });
 
   it('orderCode tồn tại nhưng thuộc về user khác → NotFoundException', async () => {
-    const { prisma, mail, orderFindUnique } = createGetOrderMocks();
+    const { prisma, mail, vouchers, orderFindUnique } = createGetOrderMocks();
     orderFindUnique.mockResolvedValue(orderRow({ userId: 'user-2' }));
 
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
     await expect(
       service.getOrderByCode('user-1', 'DH20260821ABCDEF'),
     ).rejects.toThrow(NotFoundException);
@@ -852,17 +1064,28 @@ describe('OrdersService.notifyStatusChange', () => {
     } as unknown as PrismaService;
     const sendOrderStatusUpdateEmail = jest.fn().mockResolvedValue(undefined);
     const mail = { sendOrderStatusUpdateEmail } as unknown as MailService;
-    return { prisma, mail, orderFindUnique, sendOrderStatusUpdateEmail };
+    return {
+      prisma,
+      mail,
+      vouchers: noopVouchers(),
+      orderFindUnique,
+      sendOrderStatusUpdateEmail,
+    };
   }
 
   it('order tồn tại → tra đúng email/tên khách theo orderCode rồi gọi MailService', async () => {
-    const { prisma, mail, orderFindUnique, sendOrderStatusUpdateEmail } =
-      createNotifyMocks();
+    const {
+      prisma,
+      mail,
+      vouchers,
+      orderFindUnique,
+      sendOrderStatusUpdateEmail,
+    } = createNotifyMocks();
     orderFindUnique.mockResolvedValue({
       orderCode: 'DH20260821ABCDEF',
       user: { email: 'khach@example.com', fullName: 'Nguyễn Văn A' },
     });
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await service.notifyStatusChange('DH20260821ABCDEF', 'PACKING', null);
 
@@ -882,10 +1105,15 @@ describe('OrdersService.notifyStatusChange', () => {
   });
 
   it('orderCode không tồn tại → NotFoundException, không gọi MailService', async () => {
-    const { prisma, mail, orderFindUnique, sendOrderStatusUpdateEmail } =
-      createNotifyMocks();
+    const {
+      prisma,
+      mail,
+      vouchers,
+      orderFindUnique,
+      sendOrderStatusUpdateEmail,
+    } = createNotifyMocks();
     orderFindUnique.mockResolvedValue(null);
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(
       service.notifyStatusChange('DH-NOT-EXIST', 'PACKING', null),
@@ -894,14 +1122,19 @@ describe('OrdersService.notifyStatusChange', () => {
   });
 
   it('MailService gửi lỗi → không throw ra ngoài (best-effort, chỉ log warn)', async () => {
-    const { prisma, mail, orderFindUnique, sendOrderStatusUpdateEmail } =
-      createNotifyMocks();
+    const {
+      prisma,
+      mail,
+      vouchers,
+      orderFindUnique,
+      sendOrderStatusUpdateEmail,
+    } = createNotifyMocks();
     orderFindUnique.mockResolvedValue({
       orderCode: 'DH20260821ABCDEF',
       user: { email: 'khach@example.com', fullName: 'Nguyễn Văn A' },
     });
     sendOrderStatusUpdateEmail.mockRejectedValue(new Error('SMTP lỗi'));
-    const service = new OrdersService(prisma, mail);
+    const service = new OrdersService(prisma, mail, vouchers);
 
     await expect(
       service.notifyStatusChange(

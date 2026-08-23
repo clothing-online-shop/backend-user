@@ -1,6 +1,12 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentProvider } from '@prisma/client';
-import { ArrayMinSize, IsArray, IsEnum, IsString } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsEnum,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class CreateOrderDto {
   @ApiProperty({ description: 'Id địa chỉ giao hàng đã lưu trong sổ địa chỉ' })
@@ -23,4 +29,11 @@ export class CreateOrderDto {
   })
   @IsEnum(PaymentProvider)
   paymentMethod!: PaymentProvider;
+
+  @ApiPropertyOptional({
+    description: 'Mã voucher muốn áp dụng, bỏ trống nếu không dùng',
+  })
+  @IsOptional()
+  @IsString()
+  voucherCode?: string;
 }
