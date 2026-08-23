@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   Order,
+  OrderStatus,
   PaymentStatus,
   PaymentProvider,
   Prisma,
@@ -46,17 +47,11 @@ export class PaymentsService {
     ipAddr: string,
   ): Promise<{ paymentUrl: string }> {
     const order = await this.findOwnedOrder(userId, orderId);
-    this.assertNotYetPaid(order);
+    this.assertPayable(order);
 
     const txnRef = `${order.orderCode}-${Date.now().toString(36)}`;
-    await this.prisma.paymentTransaction.create({
-      data: {
-        orderId: order.id,
-        provider: PaymentProvider.VNPAY,
-        amount: order.totalAmount,
-        status: TransactionStatus.PENDING,
-        rawPayload: { txnRef },
-      },
+    await this.createPendingTransaction(order, PaymentProvider.VNPAY, {
+      txnRef,
     });
 
     const paymentUrl = this.vnpayClient.buildPaymentUrl({
@@ -79,22 +74,9 @@ export class PaymentsService {
     amount: number;
   }> {
     const order = await this.findOwnedOrder(userId, orderId);
-    this.assertNotYetPaid(order);
+    this.assertPayable(order);
 
-    await this.prisma.$transaction([
-      this.prisma.order.update({
-        where: { id: order.id },
-        data: { paymentMethod: PaymentProvider.BANK_TRANSFER },
-      }),
-      this.prisma.paymentTransaction.create({
-        data: {
-          orderId: order.id,
-          provider: PaymentProvider.BANK_TRANSFER,
-          amount: order.totalAmount,
-          status: TransactionStatus.PENDING,
-        },
-      }),
-    ]);
+    await this.createPendingTransaction(order, PaymentProvider.BANK_TRANSFER);
 
     return {
       bankAccountNumber: this.config.get<string>('BANK_ACCOUNT_NUMBER', ''),
@@ -205,9 +187,44 @@ export class PaymentsService {
     return order;
   }
 
-  private assertNotYetPaid(order: Pick<Order, 'paymentStatus'>): void {
+  // Dùng chung cho initiateVnpay()/initiateBankTransfer(): cập nhật Order.paymentMethod theo
+  // phương thức khách vừa chọn (đơn có thể đổi phương thức nhiều lần trước khi thanh toán
+  // xong — thiếu bước này thì đơn đổi từ COD/chuyển khoản sang VNPay hay ngược lại vẫn đứng
+  // tên paymentMethod cũ, sai lệch với PaymentTransaction.provider vừa tạo) rồi tạo 1
+  // PaymentTransaction PENDING mới trong cùng transaction DB.
+  private async createPendingTransaction(
+    order: Pick<Order, 'id' | 'totalAmount'>,
+    provider: PaymentProvider,
+    rawPayload?: Prisma.InputJsonValue,
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.order.update({
+        where: { id: order.id },
+        data: { paymentMethod: provider },
+      }),
+      this.prisma.paymentTransaction.create({
+        data: {
+          orderId: order.id,
+          provider,
+          amount: order.totalAmount,
+          status: TransactionStatus.PENDING,
+          ...(rawPayload ? { rawPayload } : {}),
+        },
+      }),
+    ]);
+  }
+
+  private assertPayable(order: Pick<Order, 'paymentStatus' | 'status'>): void {
     if (order.paymentStatus === PaymentStatus.PAID) {
       throw new BadRequestException('Đơn hàng đã được thanh toán.');
+    }
+    // Đơn đã hủy (vd admin hủy vì hết hàng) không được khởi tạo thanh toán mới — thiếu check
+    // này, khách vẫn mở được trang VNPay/xem được hướng dẫn chuyển khoản cho 1 đơn đã hủy và
+    // trả tiền, trong khi hàng đã được hoàn kho cho khách khác từ lúc hủy.
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Đơn hàng đã bị hủy, không thể thanh toán.',
+      );
     }
   }
 
@@ -216,10 +233,14 @@ export class PaymentsService {
     return Number(vnpAmount) === expected;
   }
 
-  // Idempotent — tìm PaymentTransaction VNPAY đang PENDING mới nhất của đơn; nếu đơn đã
-  // PAID hoặc không còn transaction PENDING nào (đã được IPN/Return trước đó xử lý), coi
-  // như đã áp dụng rồi, không làm lại (applied: false) — an toàn khi IPN và Return cùng
-  // gọi cho 1 kết quả, hoặc VNPay tự động gọi lại IPN nhiều lần.
+  // Idempotent — tìm đúng PaymentTransaction VNPAY đang PENDING khớp vnp_TxnRef của chính
+  // lần gọi này (không phải "PENDING mới nhất"): initiateVnpay() cho phép gọi lại nhiều lần
+  // cho cùng 1 đơn, mỗi lần tạo 1 PaymentTransaction PENDING riêng với txnRef khác nhau —
+  // nếu khách mở 2 link thanh toán rồi trả tiền qua link CŨ, "lấy PENDING mới nhất" sẽ đánh
+  // dấu SUCCESS nhầm bản ghi (link mới, chưa ai trả tiền) thay vì bản ghi khách thực sự đã
+  // trả. Nếu đơn đã PAID hoặc không còn transaction PENDING nào khớp (đã được IPN/Return
+  // trước đó xử lý), coi như đã áp dụng rồi, không làm lại (applied: false) — an toàn khi
+  // IPN và Return cùng gọi cho 1 kết quả, hoặc VNPay tự động gọi lại IPN nhiều lần.
   private async applyPaymentResult(
     order: Order,
     success: boolean,
@@ -229,11 +250,13 @@ export class PaymentsService {
       return { applied: false };
     }
 
+    const txnRef = rawPayload.vnp_TxnRef;
     const pendingTxn = await this.prisma.paymentTransaction.findFirst({
       where: {
         orderId: order.id,
         provider: PaymentProvider.VNPAY,
         status: TransactionStatus.PENDING,
+        ...(txnRef ? { rawPayload: { path: ['txnRef'], equals: txnRef } } : {}),
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -241,29 +264,45 @@ export class PaymentsService {
       return { applied: false };
     }
 
-    const operations: Prisma.PrismaPromise<unknown>[] = [
-      this.prisma.paymentTransaction.update({
-        where: { id: pendingTxn.id },
+    // Đơn bị hủy trong lúc khách đang thanh toán (tab VNPay mở từ trước khi admin hủy đơn) —
+    // không đánh dấu PAID cho 1 đơn đã hủy dù VNPay báo giao dịch thành công, hàng đã được
+    // hoàn kho lúc hủy rồi. Vẫn ghi lại kết quả giao dịch (không để PENDING treo mãi) để còn
+    // dấu vết đối soát/hoàn tiền thủ công.
+    const isCancelled = order.status === OrderStatus.CANCELLED;
+
+    // Interactive transaction (không phải mảng operations cố định) + updateMany kèm
+    // where.status: PENDING cũ — optimistic concurrency: VNPay tự retry IPN, hoặc IPN và
+    // Return cùng xử lý 1 kết quả gần như đồng thời, có thể cùng findFirst trúng đúng 1
+    // pendingTxn TRƯỚC khi cái nào commit. Trước đây update() theo id trần luôn "thắng" cho
+    // cả 2 lần gọi, phá vỡ tính idempotent mà comment ở applyPaymentResult() đã ghi —
+    // updateMany trả count=0 cho lần gọi thua cuộc (status đã đổi khỏi PENDING) để bỏ qua,
+    // không áp dụng kết quả 2 lần / không tạo 2 bản ghi PAID.
+    const applied = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.paymentTransaction.updateMany({
+        where: { id: pendingTxn.id, status: TransactionStatus.PENDING },
         data: {
-          status: success
-            ? TransactionStatus.SUCCESS
-            : TransactionStatus.FAILED,
+          status:
+            success && !isCancelled
+              ? TransactionStatus.SUCCESS
+              : TransactionStatus.FAILED,
           providerTxnId: rawPayload.vnp_TransactionNo || undefined,
           rawPayload: rawPayload,
         },
-      }),
-    ];
-    if (success) {
-      operations.push(
-        this.prisma.order.update({
+      });
+      if (count === 0) {
+        return false;
+      }
+
+      if (success && !isCancelled) {
+        await tx.order.update({
           where: { id: order.id },
           data: { paymentStatus: PaymentStatus.PAID },
-        }),
-      );
-    }
+        });
+      }
+      return true;
+    });
 
-    await this.prisma.$transaction(operations);
-    return { applied: true };
+    return { applied };
   }
 }
 

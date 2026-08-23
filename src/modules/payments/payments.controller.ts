@@ -14,6 +14,7 @@ import type { Request } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/strategies/jwt.strategy';
+import { normalizeIpAddr } from '../../common/utils/ip.util';
 import { PaymentsService } from './payments.service';
 
 @ApiTags('payments')
@@ -70,10 +71,4 @@ export class PaymentsController {
   handleIpn(@Query() query: Record<string, string>) {
     return this.paymentsService.handleVnpayIpn(query);
   }
-}
-
-// Local dev/một số proxy trả IP dạng IPv4-mapped-IPv6 ("::ffff:127.0.0.1") — VNPay yêu cầu
-// vnp_IpAddr dạng IPv4 thuần, bỏ prefix này nếu có.
-function normalizeIpAddr(ip: string): string {
-  return ip.startsWith('::ffff:') ? ip.slice('::ffff:'.length) : ip;
 }

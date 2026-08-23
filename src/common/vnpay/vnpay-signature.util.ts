@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac } from 'crypto';
+import { timingSafeEqualString } from '../utils/timing-safe-compare.util';
 
 // Đúng thuật toán ký/xác thực chính thức của VNPay: sort key theo alphabet, encode value
 // bằng encodeURIComponent rồi đổi "%20" thành "+" (khác encode chuẩn URL — đây là quy ước
@@ -25,15 +26,6 @@ function hmacSha512(data: string, hashSecret: string): string {
   return createHmac('sha512', hashSecret)
     .update(Buffer.from(data, 'utf-8'))
     .digest('hex');
-}
-
-// So sánh 2 chuỗi hex chữ ký bằng timing-safe compare — tránh lộ thông tin qua thời gian
-// phản hồi (timing attack) khi so sánh chữ ký byte-by-byte thông thường.
-function timingSafeEqualHex(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'hex');
-  const bufB = Buffer.from(b, 'hex');
-  if (bufA.length !== bufB.length || bufA.length === 0) return false;
-  return timingSafeEqual(bufA, bufB);
 }
 
 // Dùng khi TẠO request gửi VNPay (tạo giao dịch) — trả nguyên querystring đã ký kèm
@@ -64,5 +56,5 @@ export function verifySignature(
 
   const entries = sortedEncodedEntries(rest);
   const expected = hmacSha512(toSignData(entries), hashSecret);
-  return timingSafeEqualHex(expected, vnp_SecureHash);
+  return timingSafeEqualString(expected, vnp_SecureHash, 'hex');
 }
