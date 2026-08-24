@@ -290,7 +290,98 @@ describe('VouchersService.redeem', () => {
       data: { usedCount: { increment: 1 } },
     });
   });
+});
 
+describe('VouchersService.listEligible', () => {
+  function createPrismaMock() {
+    const findMany = jest.fn();
+    const count = jest.fn().mockResolvedValue(0);
+    const prisma = {
+      voucher: { findMany },
+      voucherRedemption: { count },
+    };
+    return { prisma, findMany, count };
+  }
+
+  it('trả về voucher đủ điều kiện, bỏ qua voucher không đạt minOrderValue', async () => {
+    const { prisma, findMany } = createPrismaMock();
+    findMany.mockResolvedValue([
+      voucher({
+        id: 'v-ok',
+        code: 'OK10',
+        discountValue: 10,
+        minOrderValue: 0,
+      }),
+      voucher({
+        id: 'v-toohigh',
+        code: 'NEEDS500K',
+        minOrderValue: 500000,
+      }),
+    ]);
+    const service = new VouchersService(prisma as never);
+
+    const result = await service.listEligible(
+      'user-1',
+      new Prisma.Decimal(200000),
+    );
+
+    expect(result.map((r) => r.voucher.code)).toEqual(['OK10']);
+    expect(result[0].discountAmount.toNumber()).toBe(20000);
+  });
+
+  it('bỏ qua voucher khách đã dùng hết lượt/khách (perCustomerLimit)', async () => {
+    const { prisma, findMany, count } = createPrismaMock();
+    findMany.mockResolvedValue([
+      voucher({ id: 'v-used-up', code: 'USEDUP', perCustomerLimit: 1 }),
+    ]);
+    count.mockResolvedValue(1);
+    const service = new VouchersService(prisma as never);
+
+    const result = await service.listEligible(
+      'user-1',
+      new Prisma.Decimal(100000),
+    );
+
+    expect(result).toEqual([]);
+  });
+
+  it('sắp theo discountAmount giảm dần (voucher lợi nhất lên đầu)', async () => {
+    const { prisma, findMany } = createPrismaMock();
+    findMany.mockResolvedValue([
+      voucher({ id: 'v-small', code: 'SMALL5', discountValue: 5 }),
+      voucher({ id: 'v-big', code: 'BIG20', discountValue: 20 }),
+    ]);
+    const service = new VouchersService(prisma as never);
+
+    const result = await service.listEligible(
+      'user-1',
+      new Prisma.Decimal(100000),
+    );
+
+    expect(result.map((r) => r.voucher.code)).toEqual(['BIG20', 'SMALL5']);
+  });
+
+  it('query findMany chỉ lọc isActive + trong khoảng thời gian hiệu lực ở DB (usageLimit/perCustomerLimit đánh giá riêng ở tầng ứng dụng)', async () => {
+    const { prisma, findMany } = createPrismaMock();
+    findMany.mockResolvedValue([]);
+    const service = new VouchersService(prisma as never);
+
+    await service.listEligible('user-1', new Prisma.Decimal(100000));
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        isActive: true,
+        startsAt: { lte: expect.any(Date) as Date },
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gte: expect.any(Date) as Date } },
+        ],
+      },
+    });
+  });
+});
+
+describe('VouchersService.redeem', () => {
   it('race: request khác vừa dùng hết lượt cuối trước — updateMany count=0 → ConflictException, không ghi VoucherRedemption', async () => {
     const { client, updateMany, create } = createClientMocks();
     updateMany.mockResolvedValue({ count: 0 });

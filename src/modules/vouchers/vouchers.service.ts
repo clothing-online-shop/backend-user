@@ -11,6 +11,10 @@ type VoucherReadClient = Pick<
   'voucher' | 'voucherRedemption'
 >;
 
+type EligibilityResult =
+  | { eligible: true; discountAmount: Prisma.Decimal }
+  | { eligible: false; reason: string };
+
 @Injectable()
 export class VouchersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -32,26 +36,96 @@ export class VouchersService {
     if (!voucher) {
       throw new BadRequestException('Mã voucher không tồn tại.');
     }
+
+    const result = await this.evaluateEligibility(
+      client,
+      voucher,
+      userId,
+      subtotal,
+    );
+    if (!result.eligible) {
+      throw new BadRequestException(result.reason);
+    }
+    return { voucher, discountAmount: result.discountAmount };
+  }
+
+  // Danh sách voucher đơn hàng hiện tại (theo subtotal của các dòng giỏ hàng đã chọn) ĐANG
+  // đủ điều kiện dùng — dùng cho màn chọn voucher lúc checkout (khách không cần tự biết mã).
+  // Dùng chung evaluateEligibility() với validateAndCompute() — cùng 6 điều kiện, chỉ khác
+  // validateAndCompute() throw ngay ở điều kiện đầu tiên fail (áp cho 1 mã người dùng tự
+  // nhập), còn ở đây lặp qua toàn bộ voucher rồi lặng lẽ bỏ qua voucher không đạt (không phải
+  // lỗi — khách chỉ đang xem những mã dùng được).
+  async listEligible(
+    userId: string,
+    subtotal: Prisma.Decimal,
+  ): Promise<{ voucher: Voucher; discountAmount: Prisma.Decimal }[]> {
+    const now = new Date();
+    // Thu hẹp trước ở DB những điều kiện dịch được thẳng sang where() (isActive/thời gian) —
+    // usageLimit/perCustomerLimit phụ thuộc usedCount/voucherRedemption nên vẫn phải đánh giá
+    // từng voucher ở evaluateEligibility() bên dưới.
+    const candidates = await this.prisma.voucher.findMany({
+      where: {
+        isActive: true,
+        startsAt: { lte: now },
+        OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+      },
+    });
+
+    const results = await Promise.all(
+      candidates.map(async (voucher) => ({
+        voucher,
+        result: await this.evaluateEligibility(
+          this.prisma,
+          voucher,
+          userId,
+          subtotal,
+        ),
+      })),
+    );
+
+    return results
+      .filter(
+        (
+          item,
+        ): item is {
+          voucher: Voucher;
+          result: { eligible: true; discountAmount: Prisma.Decimal };
+        } => item.result.eligible,
+      )
+      .map(({ voucher, result }) => ({
+        voucher,
+        discountAmount: result.discountAmount,
+      }))
+      .sort((a, b) => b.discountAmount.comparedTo(a.discountAmount));
+  }
+
+  private async evaluateEligibility(
+    client: VoucherReadClient,
+    voucher: Voucher,
+    userId: string,
+    subtotal: Prisma.Decimal,
+  ): Promise<EligibilityResult> {
     if (!voucher.isActive) {
-      throw new BadRequestException('Voucher đã bị vô hiệu hóa.');
+      return { eligible: false, reason: 'Voucher đã bị vô hiệu hóa.' };
     }
     const now = new Date();
     if (voucher.startsAt && now < voucher.startsAt) {
-      throw new BadRequestException('Voucher chưa tới thời gian áp dụng.');
+      return { eligible: false, reason: 'Voucher chưa tới thời gian áp dụng.' };
     }
     if (voucher.expiresAt && now > voucher.expiresAt) {
-      throw new BadRequestException('Voucher đã hết hạn sử dụng.');
+      return { eligible: false, reason: 'Voucher đã hết hạn sử dụng.' };
     }
     if (subtotal.lt(voucher.minOrderValue)) {
-      throw new BadRequestException(
-        `Đơn hàng cần tối thiểu ${voucher.minOrderValue.toString()} để áp dụng voucher này.`,
-      );
+      return {
+        eligible: false,
+        reason: `Đơn hàng cần tối thiểu ${voucher.minOrderValue.toString()} để áp dụng voucher này.`,
+      };
     }
     if (
       voucher.usageLimit !== null &&
       voucher.usedCount >= voucher.usageLimit
     ) {
-      throw new BadRequestException('Voucher đã hết lượt sử dụng.');
+      return { eligible: false, reason: 'Voucher đã hết lượt sử dụng.' };
     }
     if (voucher.perCustomerLimit !== null) {
       // Không tính đơn CANCELLED vào số lượt đã dùng — huỷ đơn coi như hoàn lại lượt, khớp
@@ -64,11 +138,17 @@ export class VouchersService {
         },
       });
       if (usedByCustomer >= voucher.perCustomerLimit) {
-        throw new BadRequestException('Bạn đã dùng hết lượt cho voucher này.');
+        return {
+          eligible: false,
+          reason: 'Bạn đã dùng hết lượt cho voucher này.',
+        };
       }
     }
 
-    return { voucher, discountAmount: computeDiscount(voucher, subtotal) };
+    return {
+      eligible: true,
+      discountAmount: computeDiscount(voucher, subtotal),
+    };
   }
 
   // Gọi trong transaction tạo đơn, sau khi Order đã có id. updateMany với điều kiện

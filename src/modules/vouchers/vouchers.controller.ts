@@ -7,6 +7,7 @@ import { PrismaService } from '../../config/prisma.service';
 import { resolveOwnedCartItems } from '../../common/utils/cart-items.util';
 import { VouchersService } from './vouchers.service';
 import { ValidateVoucherDto } from './dto/validate-voucher.dto';
+import { ListEligibleVouchersDto } from './dto/list-eligible-vouchers.dto';
 
 @ApiTags('vouchers')
 @ApiBearerAuth()
@@ -46,5 +47,34 @@ export class VouchersController {
       discountAmount: discountAmount.toNumber(),
       total: subtotal.sub(discountAmount).toNumber(),
     };
+  }
+
+  @Post('eligible')
+  @ApiOperation({
+    summary:
+      'Danh sách voucher đang đủ điều kiện áp dụng cho các dòng giỏ hàng đã chọn — dùng cho màn chọn voucher lúc checkout, khách không cần tự biết mã',
+  })
+  async listEligible(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ListEligibleVouchersDto,
+  ) {
+    const { subtotal } = await resolveOwnedCartItems(
+      this.prisma,
+      user.id,
+      dto.cartItemIds,
+    );
+    const eligible = await this.vouchersService.listEligible(user.id, subtotal);
+
+    return eligible.map(({ voucher, discountAmount }) => ({
+      code: voucher.code,
+      discountType: voucher.discountType,
+      discountValue: voucher.discountValue.toNumber(),
+      maxDiscountAmount: voucher.maxDiscountAmount?.toNumber() ?? null,
+      minOrderValue: voucher.minOrderValue.toNumber(),
+      expiresAt: voucher.expiresAt,
+      subtotal: subtotal.toNumber(),
+      discountAmount: discountAmount.toNumber(),
+      total: subtotal.sub(discountAmount).toNumber(),
+    }));
   }
 }
