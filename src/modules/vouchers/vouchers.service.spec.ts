@@ -290,6 +290,24 @@ describe('VouchersService.redeem', () => {
       data: { usedCount: { increment: 1 } },
     });
   });
+
+  it('race: request khác vừa dùng hết lượt cuối trước — updateMany count=0 → ConflictException, không ghi VoucherRedemption', async () => {
+    const { client, updateMany, create } = createClientMocks();
+    updateMany.mockResolvedValue({ count: 0 });
+    const service = new VouchersService({} as never);
+    const v = voucher({ usageLimit: 1, usedCount: 1 });
+
+    await expect(
+      service.redeem(
+        client as never,
+        v,
+        'user-1',
+        'order-1',
+        new Prisma.Decimal(20000),
+      ),
+    ).rejects.toThrow(ConflictException);
+    expect(create).not.toHaveBeenCalled();
+  });
 });
 
 describe('VouchersService.listEligible', () => {
@@ -378,25 +396,5 @@ describe('VouchersService.listEligible', () => {
         ],
       },
     });
-  });
-});
-
-describe('VouchersService.redeem', () => {
-  it('race: request khác vừa dùng hết lượt cuối trước — updateMany count=0 → ConflictException, không ghi VoucherRedemption', async () => {
-    const { client, updateMany, create } = createClientMocks();
-    updateMany.mockResolvedValue({ count: 0 });
-    const service = new VouchersService({} as never);
-    const v = voucher({ usageLimit: 1, usedCount: 1 });
-
-    await expect(
-      service.redeem(
-        client as never,
-        v,
-        'user-1',
-        'order-1',
-        new Prisma.Decimal(20000),
-      ),
-    ).rejects.toThrow(ConflictException);
-    expect(create).not.toHaveBeenCalled();
   });
 });
