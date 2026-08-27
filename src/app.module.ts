@@ -19,6 +19,10 @@ import { LocationsModule } from './modules/locations/locations.module';
 import { ShippingModule } from './modules/shipping/shipping.module';
 import { InternalModule } from './modules/internal/internal.module';
 import { VouchersModule } from './modules/vouchers/vouchers.module';
+import { BannersModule } from './modules/banners/banners.module';
+import { PopupsModule } from './modules/popups/popups.module';
+import { FlashSalesModule } from './modules/flash-sales/flash-sales.module';
+import { BlogPostsModule } from './modules/blog-posts/blog-posts.module';
 
 @Module({
   imports: [
@@ -48,6 +52,10 @@ import { VouchersModule } from './modules/vouchers/vouchers.module';
     ShippingModule,
     InternalModule,
     VouchersModule,
+    BannersModule,
+    PopupsModule,
+    FlashSalesModule,
+    BlogPostsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

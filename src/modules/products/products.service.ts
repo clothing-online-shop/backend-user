@@ -9,6 +9,7 @@ import {
 
 type ProductWithStockVariants = Product & {
   variants: { stockQuantity: number; color: string }[];
+  brand?: { name: string } | null;
 };
 
 const RELATED_PRODUCTS_LIMIT = 8;
@@ -67,7 +68,10 @@ export class ProductsService {
         orderBy: resolveOrderBy(query.sort),
         skip: (page - 1) * limit,
         take: limit,
-        include: { variants: { select: { stockQuantity: true, color: true } } },
+        include: {
+          variants: { select: { stockQuantity: true, color: true } },
+          brand: { select: { name: true } },
+        },
       }),
       this.prisma.product.count({ where }),
     ]);
@@ -127,7 +131,10 @@ export class ProductsService {
 
     const products = await this.prisma.product.findMany({
       where: { ...baseWhere, id: { in: orderedIds } },
-      include: { variants: { select: { stockQuantity: true, color: true } } },
+      include: {
+        variants: { select: { stockQuantity: true, color: true } },
+        brand: { select: { name: true } },
+      },
     });
 
     // findMany({ id: { in } }) không giữ thứ tự -> sắp lại theo điểm similarity
@@ -213,6 +220,7 @@ export class ProductsService {
         category: true,
         variants: true,
         reviews: { orderBy: { createdAt: 'desc' } },
+        brand: { select: { name: true } },
       },
     });
 
@@ -228,7 +236,10 @@ export class ProductsService {
           id: { not: product.id },
           status: ProductStatus.ACTIVE,
         },
-        include: { variants: { select: { stockQuantity: true, color: true } } },
+        include: {
+          variants: { select: { stockQuantity: true, color: true } },
+          brand: { select: { name: true } },
+        },
         take: RELATED_PRODUCTS_LIMIT,
       }),
       this.resolveCategoryAncestors(product.category.parentId),
@@ -334,6 +345,7 @@ function toListItem(product: ProductWithStockVariants) {
     name: product.name,
     slug: product.slug,
     thumbnail: product.thumbnail,
+    brandName: product.brand?.name ?? null,
     basePrice: product.basePrice.toNumber(),
     salePrice: product.salePrice?.toNumber() ?? null,
     status: product.status,
