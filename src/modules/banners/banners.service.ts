@@ -3,8 +3,9 @@ import { PrismaService } from '../../config/prisma.service';
 
 const PUBLIC_BANNER_SELECT = {
   id: true,
+  eyebrow: true,
   title: true,
-  subtitle: true,
+  description: true,
   imageUrl: true,
   linkUrl: true,
   ctaLabel: true,
