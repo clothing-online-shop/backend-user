@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { randomInt } from 'node:crypto';
 import type Redis from 'ioredis';
 import { REDIS_CLIENT } from '../../config/redis.module';
 import { MailService } from '../../modules/mail/mail.service';
@@ -79,5 +80,5 @@ export class OtpService {
 }
 
 function generateOtpCode(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return randomInt(0, 1_000_000).toString().padStart(6, '0');
 }
