@@ -381,3 +381,135 @@ describe('AuthService.login email verification gate', () => {
     expect(result.accessToken).toBeDefined();
   });
 });
+
+describe('AuthService.register', () => {
+  it('rejects a duplicate email with 409', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue({ id: 'x' });
+    await expect(
+      h.service.register({
+        email: 'u@b.com',
+        password: 'password1',
+        fullName: 'U',
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('rejects a duplicate phone with 409', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue(null);
+    (h.usersService.findByPhone as jest.Mock).mockResolvedValue({ id: 'x' });
+    await expect(
+      h.service.register({
+        email: 'u@b.com',
+        password: 'password1',
+        fullName: 'U',
+        phone: '0901234567',
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+});
+
+describe('AuthService.verifyOtp', () => {
+  it('marks the email verified and sends the welcome email on a correct code', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      email: 'u@b.com',
+      fullName: 'U',
+    });
+    (h.otpService.consume as jest.Mock).mockResolvedValue(true);
+
+    await h.service.verifyOtp('u@b.com', '123456');
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(h.usersService.markEmailVerified).toHaveBeenCalledWith('u1');
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(h.mailService.sendWelcomeEmail).toHaveBeenCalled();
+  });
+
+  it('rejects a wrong code with 400', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      email: 'u@b.com',
+    });
+    (h.otpService.consume as jest.Mock).mockResolvedValue(false);
+    await expect(
+      h.service.verifyOtp('u@b.com', '000000'),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('rejects an unknown email with 400 (no user enumeration)', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue(null);
+    await expect(
+      h.service.verifyOtp('nobody@b.com', '123456'),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('AuthService.resendOtp', () => {
+  it('sends a new code for an existing user', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      email: 'u@b.com',
+    });
+    await h.service.resendOtp('u@b.com');
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(h.otpService.send).toHaveBeenCalledWith('register', 'u@b.com');
+  });
+
+  it('stays silent for an unknown email', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue(null);
+    const res = await h.service.resendOtp('nobody@b.com');
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(h.otpService.send).not.toHaveBeenCalled();
+    expect(res.message).toMatch(/nếu email tồn tại/i);
+  });
+});
+
+describe('AuthService.login failures', () => {
+  it('locks out after too many failures', async () => {
+    const h = createHarness();
+    (h.redis.get as jest.Mock).mockResolvedValue('5');
+    await expect(
+      h.service.login({ identifier: 'u@b.com', password: 'password1' }),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
+  it('rejects a non-active account with a generic 401', async () => {
+    const h = createHarness();
+    (h.redis.get as jest.Mock).mockResolvedValue(null);
+    (h.usersService.findByEmailOrPhone as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      email: 'u@b.com',
+      password: 'h',
+      status: 'BANNED',
+      emailVerifiedAt: new Date(),
+    });
+    await expect(
+      h.service.login({ identifier: 'u@b.com', password: 'password1' }),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+});
+
+describe('AuthService.refreshTokens', () => {
+  it('rejects an invalid refresh token', async () => {
+    const h = createHarness();
+    (h.jwtService.verifyAsync as jest.Mock).mockRejectedValue(new Error('bad'));
+    await expect(h.service.refreshTokens('nope')).rejects.toMatchObject({
+      status: 401,
+    });
+  });
+});
+
+describe('AuthService.logout', () => {
+  it('silently ignores an invalid token', async () => {
+    const h = createHarness();
+    (h.jwtService.verifyAsync as jest.Mock).mockRejectedValue(new Error('bad'));
+    await expect(h.service.logout('nope')).resolves.toBeUndefined();
+  });
+});
