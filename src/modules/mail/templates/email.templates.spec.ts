@@ -1,4 +1,10 @@
 import { orderConfirmationEmailTemplate } from './email.templates';
+import {
+  passwordChangedEmailTemplate,
+  emailChangedNoticeTemplate,
+  phoneChangedNoticeTemplate,
+  passwordResetEmailTemplate,
+} from './email.templates';
 
 describe('orderConfirmationEmailTemplate', () => {
   it('render đủ mã đơn, sản phẩm, địa chỉ, phương thức thanh toán, tổng tiền', () => {
@@ -54,5 +60,28 @@ describe('orderConfirmationEmailTemplate', () => {
       });
       expect(html).toContain(expectedLabel);
     }
+  });
+});
+
+describe('security notice templates', () => {
+  it('password changed template mentions the change and support hint', () => {
+    const { subject, html } = passwordChangedEmailTemplate();
+    expect(subject).toMatch(/mật khẩu/i);
+    expect(html).toMatch(/không phải bạn/i);
+  });
+
+  it('email changed template shows the masked new address', () => {
+    const { html } = emailChangedNoticeTemplate('j******e@example.com');
+    expect(html).toContain('j******e@example.com');
+  });
+
+  it('phone changed template mentions phone', () => {
+    expect(phoneChangedNoticeTemplate().subject).toMatch(/số điện thoại/i);
+  });
+
+  it('reset email states the correct 10 minute expiry', () => {
+    expect(
+      passwordResetEmailTemplate('https://x/reset?token=t').html,
+    ).toContain('10 phút');
   });
 });

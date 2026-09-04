@@ -2,10 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createTransport, Transporter } from 'nodemailer';
 import {
+  emailChangedNoticeTemplate,
   orderConfirmationEmailTemplate,
   orderStatusUpdateEmailTemplate,
   otpEmailTemplate,
+  passwordChangedEmailTemplate,
   passwordResetEmailTemplate,
+  phoneChangedNoticeTemplate,
   welcomeEmailTemplate,
   type OrderConfirmationEmailData,
   type OrderStatusUpdateEmailData,
@@ -71,6 +74,38 @@ export class MailService {
   ): Promise<void> {
     const { subject, html } = orderStatusUpdateEmailTemplate(data);
     await this.send(to, subject, html);
+  }
+
+  private async sendBestEffort(
+    to: string,
+    subject: string,
+    html: string,
+  ): Promise<void> {
+    try {
+      await this.send(to, subject, html);
+    } catch (err) {
+      this.logger.warn(
+        `Không gửi được email cảnh báo "${subject}" tới ${to}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  async sendPasswordChangedEmail(to: string): Promise<void> {
+    const { subject, html } = passwordChangedEmailTemplate();
+    await this.sendBestEffort(to, subject, html);
+  }
+
+  async sendEmailChangedNotice(
+    oldEmail: string,
+    newEmailMasked: string,
+  ): Promise<void> {
+    const { subject, html } = emailChangedNoticeTemplate(newEmailMasked);
+    await this.sendBestEffort(oldEmail, subject, html);
+  }
+
+  async sendPhoneChangedNotice(to: string): Promise<void> {
+    const { subject, html } = phoneChangedNoticeTemplate();
+    await this.sendBestEffort(to, subject, html);
   }
 
   private async send(to: string, subject: string, html: string): Promise<void> {

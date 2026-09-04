@@ -41,3 +41,50 @@ describe('UsersService.changePassword', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe('UsersService change-password notification', () => {
+  it('sends a password-changed email after a successful change', async () => {
+    const h = createHarness();
+    const hash = await argon2.hash('password1');
+    (h.prisma.user.findUnique as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      password: hash,
+      email: 'u@b.com',
+    });
+    (h.prisma.user.update as jest.Mock).mockResolvedValue({});
+    (h.prisma.refreshToken.updateMany as jest.Mock).mockResolvedValue({});
+
+    await h.service.changePassword('u1', {
+      currentPassword: 'password1',
+      newPassword: 'password2',
+    });
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(h.mailService.sendPasswordChangedEmail).toHaveBeenCalledWith(
+      'u@b.com',
+    );
+  });
+
+  it('still succeeds if the notification email throws', async () => {
+    const h = createHarness();
+    const hash = await argon2.hash('password1');
+    (h.prisma.user.findUnique as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      password: hash,
+      email: 'u@b.com',
+    });
+    (h.prisma.user.update as jest.Mock).mockResolvedValue({});
+    (h.prisma.refreshToken.updateMany as jest.Mock).mockResolvedValue({});
+    (h.mailService.sendPasswordChangedEmail as jest.Mock).mockRejectedValue(
+      new Error('smtp down'),
+    );
+
+    await expect(
+      h.service.changePassword('u1', {
+        currentPassword: 'password1',
+        newPassword: 'password2',
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    ).resolves.toMatchObject({ message: expect.any(String) });
+  });
+});

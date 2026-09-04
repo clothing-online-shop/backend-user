@@ -298,6 +298,33 @@ describe('AuthService.forgotPassword cooldown', () => {
   });
 });
 
+describe('AuthService.resetPassword notification', () => {
+  it('emails the user after a successful reset', async () => {
+    const h = createHarness();
+    jest.spyOn(argon2, 'verify').mockResolvedValue(false);
+    (h.jwtService.verifyAsync as jest.Mock).mockResolvedValue({
+      sub: 'u1',
+      purpose: 'reset-password',
+      jti: 'j1',
+    });
+    (h.usersService.findById as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      password: 'h',
+      email: 'u@b.com',
+    });
+    (h.redis.get as jest.Mock).mockResolvedValue('j1');
+    (h.usersService.updatePassword as jest.Mock).mockResolvedValue({});
+
+    await h.service.resetPassword('token', 'brandnew1');
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(h.mailService.sendPasswordChangedEmail).toHaveBeenCalledWith(
+      'u@b.com',
+    );
+    jest.restoreAllMocks();
+  });
+});
+
 describe('AuthService.login email verification gate', () => {
   const activeUser = {
     id: 'u1',

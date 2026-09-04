@@ -53,7 +53,49 @@ export function passwordResetEmailTemplate(resetLink: string): {
       'Đặt lại mật khẩu',
       `<p>Bạn (hoặc ai đó) vừa yêu cầu đặt lại mật khẩu cho tài khoản này.</p>
        <p><a href="${resetLink}" style="display: inline-block; padding: 10px 20px; background: #111; color: #fff; text-decoration: none; border-radius: 4px;">Đặt lại mật khẩu</a></p>
-       <p>Link có hiệu lực trong 15 phút. Nếu bạn không yêu cầu, hãy bỏ qua email này.</p>`,
+       <p>Link có hiệu lực trong 10 phút. Nếu bạn không yêu cầu, hãy bỏ qua email này.</p>`,
+    ),
+  };
+}
+
+export function passwordChangedEmailTemplate(): {
+  subject: string;
+  html: string;
+} {
+  return {
+    subject: 'Mật khẩu của bạn vừa được thay đổi',
+    html: layout(
+      'Mật khẩu đã thay đổi',
+      `<p>Mật khẩu tài khoản Clothing Shop của bạn vừa được thay đổi thành công.</p>
+       <p>Nếu <strong>không phải bạn</strong> thực hiện, hãy đặt lại mật khẩu ngay và liên hệ bộ phận hỗ trợ.</p>`,
+    ),
+  };
+}
+
+export function emailChangedNoticeTemplate(newEmailMasked: string): {
+  subject: string;
+  html: string;
+} {
+  return {
+    subject: 'Email đăng nhập của bạn vừa được thay đổi',
+    html: layout(
+      'Email đăng nhập đã thay đổi',
+      `<p>Email đăng nhập của tài khoản Clothing Shop vừa được đổi sang <strong>${newEmailMasked}</strong>.</p>
+       <p>Nếu <strong>không phải bạn</strong> thực hiện, hãy liên hệ bộ phận hỗ trợ ngay — tài khoản của bạn có thể đang bị xâm nhập.</p>`,
+    ),
+  };
+}
+
+export function phoneChangedNoticeTemplate(): {
+  subject: string;
+  html: string;
+} {
+  return {
+    subject: 'Số điện thoại tài khoản vừa được thay đổi',
+    html: layout(
+      'Số điện thoại đã thay đổi',
+      `<p>Số điện thoại của tài khoản Clothing Shop vừa được cập nhật.</p>
+       <p>Nếu <strong>không phải bạn</strong> thực hiện, hãy liên hệ bộ phận hỗ trợ ngay.</p>`,
     ),
   };
 }

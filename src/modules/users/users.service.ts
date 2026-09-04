@@ -10,6 +10,7 @@ import { PrismaService } from '../../config/prisma.service';
 import { OtpService } from '../../common/otp/otp.service';
 import { MailService } from '../mail/mail.service';
 import { toSafeUser } from '../../common/utils/safe-user.util';
+import { maskEmail } from '../../common/utils/email.util';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 
@@ -122,6 +123,10 @@ export class UsersService {
       data: { revoked: true },
     });
 
+    await this.notifyBestEffort(
+      this.mailService.sendPasswordChangedEmail(user.email),
+    );
+
     return { message: 'Đổi mật khẩu thành công.' };
   }
 
@@ -146,7 +151,8 @@ export class UsersService {
   }
 
   async confirmEmailChange(userId: string, newEmail: string, code: string) {
-    await this.findExisting(userId);
+    const user = await this.findExisting(userId);
+    const oldEmail = user.email;
     const normalizedEmail = newEmail.trim().toLowerCase();
 
     const valid = await this.otpService.consume(
@@ -163,6 +169,12 @@ export class UsersService {
         where: { id: userId },
         data: { email: normalizedEmail, emailVerifiedAt: new Date() },
       });
+      await this.notifyBestEffort(
+        this.mailService.sendEmailChangedNotice(
+          oldEmail,
+          maskEmail(normalizedEmail),
+        ),
+      );
       return this.toProfileResponse(updated);
     } catch (err) {
       throw this.asConflictIfDuplicate(err, 'Email đã được sử dụng.');
@@ -207,9 +219,23 @@ export class UsersService {
         where: { id: userId },
         data: { phone: newPhone, phoneVerifiedAt: new Date() },
       });
+      await this.notifyBestEffort(
+        this.mailService.sendPhoneChangedNotice(user.email),
+      );
       return this.toProfileResponse(updated);
     } catch (err) {
       throw this.asConflictIfDuplicate(err, 'Số điện thoại đã được sử dụng.');
+    }
+  }
+
+  // Email cảnh báo bảo mật là best-effort tuyệt đối: MailService đã tự nuốt lỗi SMTP,
+  // lớp này chặn nốt mọi lỗi bất ngờ để việc gửi mail không bao giờ làm hỏng luồng đổi
+  // mật khẩu / email / SĐT.
+  private async notifyBestEffort(send: Promise<void>): Promise<void> {
+    try {
+      await send;
+    } catch {
+      // đã được MailService ghi log — nuốt ở đây, không chặn luồng nghiệp vụ
     }
   }
 

@@ -334,6 +334,8 @@ export class AuthService {
 
     // Token đã dùng xong — xóa jti để không thể dùng lại link này.
     await this.redis.del(`${RESET_JTI_PREFIX}${payload.sub}`);
+
+    await this.mailService.sendPasswordChangedEmail(user.email);
   }
 
   private async issueTokens(user: User): Promise<AuthTokens> {
