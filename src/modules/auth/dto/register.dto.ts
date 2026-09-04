@@ -1,6 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+} from 'class-validator';
+import {
+  VN_PHONE_REGEX,
+  VN_PHONE_INVALID_MESSAGE,
+} from '../../../common/utils/phone.util';
 
 export class RegisterDto {
   @ApiProperty()
@@ -10,9 +20,9 @@ export class RegisterDto {
   @IsEmail()
   email: string;
 
-  @ApiProperty({ minLength: 6 })
+  @ApiProperty({ minLength: 8 })
   @IsString()
-  @MinLength(6)
+  @MinLength(8)
   password: string;
 
   @ApiProperty()
@@ -20,8 +30,9 @@ export class RegisterDto {
   @MinLength(2)
   fullName: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, example: '0901234567' })
   @IsOptional()
   @IsString()
+  @Matches(VN_PHONE_REGEX, { message: VN_PHONE_INVALID_MESSAGE })
   phone?: string;
 }
