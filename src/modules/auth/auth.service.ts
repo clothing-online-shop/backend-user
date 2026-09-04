@@ -6,6 +6,7 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -30,6 +31,8 @@ export interface AuthTokens {
 const RESET_TOKEN_PURPOSE = 'reset-password';
 const RESET_TOKEN_SECRET_KEY = 'JWT_RESET_SECRET';
 const RESET_TOKEN_SECRET_DEFAULT = 'change-me-reset-secret';
+const RESET_JTI_PREFIX = 'pwd-reset-jti:';
+const RESET_TOKEN_TTL_SECONDS = 10 * 60;
 const REGISTER_OTP_PURPOSE = 'register';
 const LOGIN_LOCKOUT_TTL_SECONDS = 15 * 60;
 const LOGIN_MAX_ATTEMPTS = 5;
@@ -233,8 +236,9 @@ export class AuthService {
       return;
     }
 
+    const jti = randomUUID();
     const resetToken = await this.jwtService.signAsync(
-      { sub: user.id, purpose: RESET_TOKEN_PURPOSE },
+      { sub: user.id, purpose: RESET_TOKEN_PURPOSE, jti },
       {
         secret: this.config.get<string>(
           RESET_TOKEN_SECRET_KEY,
@@ -244,6 +248,13 @@ export class AuthService {
         // mật khẩu (chọn cận trên cho đỡ gấp gáp với người dùng thật).
         expiresIn: '10m',
       },
+    );
+    // Ghi đè jti cũ nếu có — chỉ link mới nhất còn hiệu lực, và mỗi link chỉ dùng một lần.
+    await this.redis.set(
+      `${RESET_JTI_PREFIX}${user.id}`,
+      jti,
+      'EX',
+      RESET_TOKEN_TTL_SECONDS,
     );
 
     const webOrigin = this.config.get<string>(
@@ -255,7 +266,7 @@ export class AuthService {
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
-    let payload: { sub: string; purpose: string };
+    let payload: { sub: string; purpose: string; jti: string };
     try {
       payload = await this.jwtService.verifyAsync(token, {
         secret: this.config.get<string>(
@@ -279,6 +290,15 @@ export class AuthService {
         'Token đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
       );
     }
+
+    // Single-use + single-outstanding: jti phải khớp giá trị mới nhất đã lưu ở Redis.
+    const storedJti = await this.redis.get(`${RESET_JTI_PREFIX}${payload.sub}`);
+    if (!storedJti || storedJti !== payload.jti) {
+      throw new BadRequestException(
+        'Token đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.',
+      );
+    }
+
     if (await argon2.verify(user.password, newPassword)) {
       throw new BadRequestException(
         'Mật khẩu mới không được trùng mật khẩu cũ.',
@@ -292,6 +312,9 @@ export class AuthService {
       where: { userId: user.id, revoked: false },
       data: { revoked: true },
     });
+
+    // Token đã dùng xong — xóa jti để không thể dùng lại link này.
+    await this.redis.del(`${RESET_JTI_PREFIX}${payload.sub}`);
   }
 
   private async issueTokens(user: User): Promise<AuthTokens> {

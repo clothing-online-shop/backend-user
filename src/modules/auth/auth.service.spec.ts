@@ -1,5 +1,14 @@
 import * as argon2 from 'argon2';
 import { AuthService } from './auth.service';
+
+// argon2's native addon exports are non-configurable, so jest.spyOn cannot patch
+// them directly. Re-wrap the module in a plain object that keeps the real
+// implementations but allows individual functions to be spied on per-test.
+jest.mock('argon2', () => ({
+  __esModule: true,
+  ...jest.requireActual<typeof import('argon2')>('argon2'),
+}));
+
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../../config/prisma.service';
 import { MailService } from '../mail/mail.service';
@@ -177,5 +186,76 @@ describe('AuthService reset token secret', () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       (h.jwtService.verifyAsync as jest.Mock).mock.calls[0][1].secret,
     ).toBe('change-me-reset-secret');
+  });
+});
+
+describe('AuthService reset token jti', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  const validPayload = { sub: 'u1', purpose: 'reset-password', jti: 'jti-123' };
+
+  function primeResetOk(h: ReturnType<typeof createHarness>) {
+    (h.jwtService.verifyAsync as jest.Mock).mockResolvedValue(validPayload);
+    (h.usersService.findById as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      password: 'hash-of-something-else',
+      email: 'u@b.com',
+    });
+    // argon2.verify against a bogus hash throws -> treat as "not the same password"
+    jest.spyOn(argon2, 'verify').mockResolvedValue(false);
+  }
+
+  it('stores a jti when issuing the reset link', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      email: 'u@b.com',
+    });
+
+    await h.service.forgotPassword('u@b.com');
+
+    const setCall = (h.redis.set as jest.Mock).mock.calls.find(([k]) =>
+      String(k).startsWith('pwd-reset-jti:u1'),
+    ) as unknown[] | undefined;
+    expect(setCall).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const signedJti = (h.jwtService.signAsync as jest.Mock).mock.calls.find(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      ([p]) => p?.purpose === 'reset-password',
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    )[0].jti;
+    expect(setCall![1]).toBe(signedJti);
+  });
+
+  it('rejects when the stored jti does not match', async () => {
+    const h = createHarness();
+    primeResetOk(h);
+    (h.redis.get as jest.Mock).mockResolvedValue('a-different-jti');
+
+    await expect(
+      h.service.resetPassword('token', 'newpassword1'),
+    ).rejects.toThrow('Token đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.');
+  });
+
+  it('rejects when there is no stored jti (already used / expired)', async () => {
+    const h = createHarness();
+    primeResetOk(h);
+    (h.redis.get as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      h.service.resetPassword('token', 'newpassword1'),
+    ).rejects.toThrow();
+  });
+
+  it('deletes the jti after a successful reset', async () => {
+    const h = createHarness();
+    primeResetOk(h);
+    (h.redis.get as jest.Mock).mockResolvedValue('jti-123');
+    (h.usersService.updatePassword as jest.Mock).mockResolvedValue({});
+
+    await h.service.resetPassword('token', 'newpassword1');
+
+    const redis = h.redis as unknown as Record<string, jest.Mock>;
+    expect(redis.del).toHaveBeenCalledWith('pwd-reset-jti:u1');
   });
 });
