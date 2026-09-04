@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { AuthService } from './auth.service';
 
@@ -294,5 +295,62 @@ describe('AuthService.forgotPassword cooldown', () => {
     expect(setCall).toBeDefined();
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
     expect(setCall?.slice(-2)).toEqual(['EX', 60]);
+  });
+});
+
+describe('AuthService.login email verification gate', () => {
+  const activeUser = {
+    id: 'u1',
+    email: 'u@b.com',
+    password: 'hash',
+    role: 'CUSTOMER',
+    status: 'ACTIVE',
+  };
+
+  beforeEach(() => {
+    jest.spyOn(argon2, 'verify').mockResolvedValue(true);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('rejects login when emailVerifiedAt is null', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmailOrPhone as jest.Mock).mockResolvedValue({
+      ...activeUser,
+      emailVerifiedAt: null,
+    });
+
+    await expect(
+      h.service.login({ identifier: 'u@b.com', password: 'password1' }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('includes the EMAIL_NOT_VERIFIED marker', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmailOrPhone as jest.Mock).mockResolvedValue({
+      ...activeUser,
+      emailVerifiedAt: null,
+    });
+
+    await h.service
+      .login({ identifier: 'u@b.com', password: 'password1' })
+      .catch((e: ForbiddenException) => {
+        expect(e.getResponse()).toMatchObject({ error: 'EMAIL_NOT_VERIFIED' });
+      });
+    expect.assertions(1);
+  });
+
+  it('allows login when the email is verified', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmailOrPhone as jest.Mock).mockResolvedValue({
+      ...activeUser,
+      emailVerifiedAt: new Date(),
+    });
+    (h.prisma.refreshToken.create as jest.Mock).mockResolvedValue({});
+
+    const result = await h.service.login({
+      identifier: 'u@b.com',
+      password: 'password1',
+    });
+    expect(result.accessToken).toBeDefined();
   });
 });

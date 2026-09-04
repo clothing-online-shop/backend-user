@@ -81,12 +81,13 @@ async function main() {
   const adminPasswordHash = await argon2.hash('admin123');
   await prisma.user.upsert({
     where: { email: 'admin@clothing-shop.com' },
-    update: {},
+    update: { emailVerifiedAt: new Date() },
     create: {
       email: 'admin@clothing-shop.com',
       password: adminPasswordHash,
       fullName: 'Quản trị viên',
       role: 'ADMIN',
+      emailVerifiedAt: new Date(),
     },
   });
 

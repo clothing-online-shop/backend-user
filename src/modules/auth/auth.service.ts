@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -141,6 +142,15 @@ export class AuthService {
     }
 
     await this.clearLoginFailures(identifier);
+
+    if (!user.emailVerifiedAt) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        error: 'EMAIL_NOT_VERIFIED',
+        message:
+          'Tài khoản chưa xác thực email. Vui lòng kiểm tra hộp thư hoặc yêu cầu gửi lại mã.',
+      });
+    }
 
     const tokens = await this.issueTokens(user);
     return { ...tokens, user: toSafeUser(user) };
