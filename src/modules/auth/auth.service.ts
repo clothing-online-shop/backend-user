@@ -17,6 +17,7 @@ import { UsersService } from '../users/users.service';
 import { MailService } from '../mail/mail.service';
 import { OtpService } from '../../common/otp/otp.service';
 import { toSafeUser } from '../../common/utils/safe-user.util';
+import { normalizeEmail } from '../../common/utils/email.util';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
@@ -46,7 +47,8 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<Omit<User, 'password'>> {
-    const existingByEmail = await this.usersService.findByEmail(dto.email);
+    const email = normalizeEmail(dto.email);
+    const existingByEmail = await this.usersService.findByEmail(email);
     if (existingByEmail) {
       throw new ConflictException('Email đã được sử dụng');
     }
@@ -60,7 +62,7 @@ export class AuthService {
 
     const passwordHash = await argon2.hash(dto.password);
     const user = await this.usersService.create({
-      email: dto.email,
+      email,
       passwordHash,
       fullName: dto.fullName,
       phone: dto.phone,
@@ -68,20 +70,21 @@ export class AuthService {
 
     // Email chào mừng dời sang lúc verify-otp thành công — lúc này tài khoản chưa xác
     // thực, "chào mừng" đúng lúc account đã thật hơn là ngay khi vừa tạo.
-    await this.otpService.send(REGISTER_OTP_PURPOSE, user.email);
+    await this.otpService.send(REGISTER_OTP_PURPOSE, email);
 
     return toSafeUser(user);
   }
 
   async verifyOtp(email: string, code: string): Promise<{ message: string }> {
-    const user = await this.usersService.findByEmail(email);
+    const normalized = normalizeEmail(email);
+    const user = await this.usersService.findByEmail(normalized);
     if (!user) {
       throw new BadRequestException('Mã OTP không đúng hoặc đã hết hạn.');
     }
 
     const valid = await this.otpService.consume(
       REGISTER_OTP_PURPOSE,
-      email,
+      normalized,
       code,
     );
     if (!valid) {
@@ -96,9 +99,10 @@ export class AuthService {
 
   async resendOtp(email: string): Promise<{ message: string }> {
     // Không tiết lộ email có tồn tại hay không — cùng nguyên tắc với forgotPassword.
-    const user = await this.usersService.findByEmail(email);
+    const normalized = normalizeEmail(email);
+    const user = await this.usersService.findByEmail(normalized);
     if (user) {
-      await this.otpService.send(REGISTER_OTP_PURPOSE, email);
+      await this.otpService.send(REGISTER_OTP_PURPOSE, normalized);
     }
 
     return { message: 'Nếu email tồn tại, mã OTP mới đã được gửi.' };
@@ -110,7 +114,7 @@ export class AuthService {
     const identifier = dto.identifier.trim().toLowerCase();
     await this.assertNotLocked(identifier);
 
-    const user = await this.usersService.findByEmailOrPhone(dto.identifier);
+    const user = await this.usersService.findByEmailOrPhone(identifier);
     if (!user) {
       await this.recordLoginFailure(identifier);
       throw new UnauthorizedException('Email/SĐT hoặc mật khẩu không đúng');
@@ -218,9 +222,12 @@ export class AuthService {
   }
 
   async forgotPassword(email: string): Promise<void> {
-    const user = await this.usersService.findByEmail(email);
+    const normalized = normalizeEmail(email);
+    const user = await this.usersService.findByEmail(normalized);
     if (!user) {
-      this.logger.warn(`Forgot-password requested for unknown email: ${email}`);
+      this.logger.warn(
+        `Forgot-password requested for unknown email: ${normalized}`,
+      );
       return;
     }
 
@@ -242,7 +249,7 @@ export class AuthService {
       'http://localhost:3000',
     );
     const resetLink = `${webOrigin}/reset-password?token=${resetToken}`;
-    await this.mailService.sendPasswordResetEmail(email, resetLink);
+    await this.mailService.sendPasswordResetEmail(normalized, resetLink);
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {

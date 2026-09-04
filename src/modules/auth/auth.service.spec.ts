@@ -1,0 +1,122 @@
+import { AuthService } from './auth.service';
+import { UsersService } from '../users/users.service';
+import { PrismaService } from '../../config/prisma.service';
+import { MailService } from '../mail/mail.service';
+import { OtpService } from '../../common/otp/otp.service';
+
+function createHarness() {
+  const usersService = {
+    findByEmail: jest.fn(),
+    findByPhone: jest.fn(),
+    findByEmailOrPhone: jest.fn(),
+    findById: jest.fn(),
+    create: jest.fn(),
+    markEmailVerified: jest.fn(),
+    updatePassword: jest.fn(),
+  } as unknown as jest.Mocked<UsersService>;
+
+  const prisma = {
+    refreshToken: {
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
+  } as unknown as PrismaService;
+
+  const jwtService = {
+    signAsync: jest.fn().mockResolvedValue('signed.jwt.token'),
+    verifyAsync: jest.fn(),
+  } as unknown as import('@nestjs/jwt').JwtService;
+
+  const values: Record<string, string> = {};
+  const config = {
+    get: jest.fn((k: string, d?: string) => values[k] ?? d),
+  } as unknown as import('@nestjs/config').ConfigService;
+
+  const mailService = {
+    sendWelcomeEmail: jest.fn(),
+    sendPasswordResetEmail: jest.fn(),
+    sendPasswordChangedEmail: jest.fn(),
+  } as unknown as MailService;
+
+  const otpService = {
+    send: jest.fn(),
+    consume: jest.fn(),
+  } as unknown as OtpService;
+
+  const redis = {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    incr: jest.fn(),
+    expire: jest.fn(),
+    exists: jest.fn().mockResolvedValue(0),
+  } as unknown as import('ioredis').default;
+
+  const service = new AuthService(
+    usersService,
+    prisma,
+    jwtService,
+    config,
+    mailService,
+    otpService,
+    redis,
+  );
+
+  return {
+    service,
+    usersService,
+    prisma,
+    jwtService,
+    config,
+    mailService,
+    otpService,
+    redis,
+  };
+}
+
+export { createHarness };
+
+describe('AuthService email normalization', () => {
+  it('register looks up and creates with a normalized email', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue(null);
+    (h.usersService.create as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      email: 'user@example.com',
+      password: 'hash',
+      fullName: 'U',
+    });
+
+    await h.service.register({
+      email: '  User@Example.COM ',
+      password: 'password1',
+      fullName: 'U',
+    });
+
+    const users = h.usersService as unknown as Record<string, jest.Mock>;
+    const otp = h.otpService as unknown as Record<string, jest.Mock>;
+    expect(users.findByEmail).toHaveBeenCalledWith('user@example.com');
+    const createArg = (users.create.mock.calls[0] as unknown[])[0] as {
+      email: string;
+    };
+    expect(createArg.email).toBe('user@example.com');
+    expect(otp.send).toHaveBeenCalledWith('register', 'user@example.com');
+  });
+
+  it('login queries with the normalized identifier', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmailOrPhone as jest.Mock).mockResolvedValue(null);
+
+    await expect(
+      h.service.login({
+        identifier: '  User@Example.COM ',
+        password: 'password1',
+      }),
+    ).rejects.toThrow();
+
+    const users = h.usersService as unknown as Record<string, jest.Mock>;
+    expect(users.findByEmailOrPhone).toHaveBeenCalledWith('user@example.com');
+  });
+});
