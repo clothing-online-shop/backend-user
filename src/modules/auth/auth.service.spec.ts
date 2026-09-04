@@ -143,3 +143,39 @@ describe('AuthService.resetPassword password reuse', () => {
     ).rejects.toThrow('Mật khẩu mới không được trùng mật khẩu cũ.');
   });
 });
+
+describe('AuthService reset token secret', () => {
+  it('signs forgot-password token with JWT_RESET_SECRET', async () => {
+    const h = createHarness();
+    (h.usersService.findByEmail as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      email: 'u@b.com',
+    });
+
+    await h.service.forgotPassword('u@b.com');
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const signCall = (h.jwtService.signAsync as jest.Mock).mock.calls.find(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      ([payload]) => payload?.purpose === 'reset-password',
+    );
+    expect(signCall).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    expect(signCall[1].secret).toBe('change-me-reset-secret');
+  });
+
+  it('verifies reset token with JWT_RESET_SECRET', async () => {
+    const h = createHarness();
+    (h.jwtService.verifyAsync as jest.Mock).mockRejectedValue(
+      new Error('bad sig'),
+    );
+
+    await expect(
+      h.service.resetPassword('token', 'newpassword1'),
+    ).rejects.toThrow();
+    expect(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      (h.jwtService.verifyAsync as jest.Mock).mock.calls[0][1].secret,
+    ).toBe('change-me-reset-secret');
+  });
+});

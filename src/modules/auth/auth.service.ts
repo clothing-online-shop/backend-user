@@ -28,6 +28,8 @@ export interface AuthTokens {
 }
 
 const RESET_TOKEN_PURPOSE = 'reset-password';
+const RESET_TOKEN_SECRET_KEY = 'JWT_RESET_SECRET';
+const RESET_TOKEN_SECRET_DEFAULT = 'change-me-reset-secret';
 const REGISTER_OTP_PURPOSE = 'register';
 const LOGIN_LOCKOUT_TTL_SECONDS = 15 * 60;
 const LOGIN_MAX_ATTEMPTS = 5;
@@ -235,8 +237,8 @@ export class AuthService {
       { sub: user.id, purpose: RESET_TOKEN_PURPOSE },
       {
         secret: this.config.get<string>(
-          'JWT_SECRET',
-          'change-me-access-secret',
+          RESET_TOKEN_SECRET_KEY,
+          RESET_TOKEN_SECRET_DEFAULT,
         ),
         // Rút từ 15 phút xuống 10 phút — khớp yêu cầu "hiệu lực 5-10 phút" của task quên
         // mật khẩu (chọn cận trên cho đỡ gấp gáp với người dùng thật).
@@ -257,8 +259,8 @@ export class AuthService {
     try {
       payload = await this.jwtService.verifyAsync(token, {
         secret: this.config.get<string>(
-          'JWT_SECRET',
-          'change-me-access-secret',
+          RESET_TOKEN_SECRET_KEY,
+          RESET_TOKEN_SECRET_DEFAULT,
         ),
       });
     } catch {
