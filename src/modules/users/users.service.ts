@@ -8,6 +8,7 @@ import { Prisma, User, UserRole } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../../config/prisma.service';
 import { OtpService } from '../../common/otp/otp.service';
+import { MailService } from '../mail/mail.service';
 import { toSafeUser } from '../../common/utils/safe-user.util';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -28,6 +29,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly otpService: OtpService,
+    private readonly mailService: MailService,
   ) {}
 
   findByEmail(email: string): Promise<User | null> {
@@ -103,6 +105,12 @@ export class UsersService {
   ): Promise<{ message: string }> {
     const user = await this.findExisting(userId);
     await this.verifyCurrentPassword(user, dto.currentPassword);
+
+    if (dto.newPassword === dto.currentPassword) {
+      throw new BadRequestException(
+        'Mật khẩu mới không được trùng mật khẩu hiện tại.',
+      );
+    }
 
     const passwordHash = await argon2.hash(dto.newPassword);
     await this.updatePassword(userId, passwordHash);

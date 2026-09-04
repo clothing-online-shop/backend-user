@@ -1,3 +1,4 @@
+import * as argon2 from 'argon2';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../../config/prisma.service';
@@ -118,5 +119,27 @@ describe('AuthService email normalization', () => {
 
     const users = h.usersService as unknown as Record<string, jest.Mock>;
     expect(users.findByEmailOrPhone).toHaveBeenCalledWith('user@example.com');
+  });
+});
+
+describe('AuthService.resetPassword password reuse', () => {
+  it('rejects a new password identical to the stored one', async () => {
+    const h = createHarness();
+    const hash = await argon2.hash('oldpassword');
+    (h.jwtService.verifyAsync as jest.Mock).mockResolvedValue({
+      sub: 'u1',
+      purpose: 'reset-password',
+      jti: 'j1',
+    });
+    (h.usersService.findById as jest.Mock).mockResolvedValue({
+      id: 'u1',
+      password: hash,
+      email: 'u@b.com',
+    });
+    (h.redis.get as jest.Mock).mockResolvedValue('j1'); // jti check added in Task 7; harmless here
+
+    await expect(
+      h.service.resetPassword('token', 'oldpassword'),
+    ).rejects.toThrow('Mật khẩu mới không được trùng mật khẩu cũ.');
   });
 });

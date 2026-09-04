@@ -271,11 +271,23 @@ export class AuthService {
       throw new BadRequestException('Token đặt lại mật khẩu không hợp lệ');
     }
 
+    const user = await this.usersService.findById(payload.sub);
+    if (!user) {
+      throw new BadRequestException(
+        'Token đặt lại mật khẩu không hợp lệ hoặc đã hết hạn',
+      );
+    }
+    if (await argon2.verify(user.password, newPassword)) {
+      throw new BadRequestException(
+        'Mật khẩu mới không được trùng mật khẩu cũ.',
+      );
+    }
+
     const passwordHash = await argon2.hash(newPassword);
-    await this.usersService.updatePassword(payload.sub, passwordHash);
+    await this.usersService.updatePassword(user.id, passwordHash);
 
     await this.prisma.refreshToken.updateMany({
-      where: { userId: payload.sub, revoked: false },
+      where: { userId: user.id, revoked: false },
       data: { revoked: true },
     });
   }
