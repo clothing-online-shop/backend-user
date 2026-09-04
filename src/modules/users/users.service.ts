@@ -164,21 +164,23 @@ export class UsersService {
       throw new BadRequestException('Mã OTP không đúng hoặc đã hết hạn.');
     }
 
+    let updated: User;
     try {
-      const updated = await this.prisma.user.update({
+      updated = await this.prisma.user.update({
         where: { id: userId },
         data: { email: normalizedEmail, emailVerifiedAt: new Date() },
       });
-      await this.notifyBestEffort(
-        this.mailService.sendEmailChangedNotice(
-          oldEmail,
-          maskEmail(normalizedEmail),
-        ),
-      );
-      return this.toProfileResponse(updated);
     } catch (err) {
       throw this.asConflictIfDuplicate(err, 'Email đã được sử dụng.');
     }
+
+    await this.notifyBestEffort(
+      this.mailService.sendEmailChangedNotice(
+        oldEmail,
+        maskEmail(normalizedEmail),
+      ),
+    );
+    return this.toProfileResponse(updated);
   }
 
   async requestPhoneChange(
@@ -214,18 +216,20 @@ export class UsersService {
       throw new BadRequestException('Mã OTP không đúng hoặc đã hết hạn.');
     }
 
+    let updated: User;
     try {
-      const updated = await this.prisma.user.update({
+      updated = await this.prisma.user.update({
         where: { id: userId },
         data: { phone: newPhone, phoneVerifiedAt: new Date() },
       });
-      await this.notifyBestEffort(
-        this.mailService.sendPhoneChangedNotice(user.email),
-      );
-      return this.toProfileResponse(updated);
     } catch (err) {
       throw this.asConflictIfDuplicate(err, 'Số điện thoại đã được sử dụng.');
     }
+
+    await this.notifyBestEffort(
+      this.mailService.sendPhoneChangedNotice(user.email),
+    );
+    return this.toProfileResponse(updated);
   }
 
   // Email cảnh báo bảo mật là best-effort tuyệt đối: MailService đã tự nuốt lỗi SMTP,

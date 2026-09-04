@@ -249,7 +249,14 @@ export class AuthService {
     }
 
     const cooldownKey = `${RESET_COOLDOWN_PREFIX}${normalized}`;
-    if (await this.redis.exists(cooldownKey)) {
+    const acquired = await this.redis.set(
+      cooldownKey,
+      '1',
+      'EX',
+      RESET_COOLDOWN_SECONDS,
+      'NX',
+    );
+    if (!acquired) {
       return;
     }
 
@@ -280,8 +287,6 @@ export class AuthService {
     );
     const resetLink = `${webOrigin}/reset-password?token=${resetToken}`;
     await this.mailService.sendPasswordResetEmail(normalized, resetLink);
-
-    await this.redis.set(cooldownKey, '1', 'EX', RESET_COOLDOWN_SECONDS);
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {

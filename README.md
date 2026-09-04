@@ -76,11 +76,14 @@ Server chạy ở `http://localhost:3001`, Swagger docs tại `http://localhost:
 | `DATABASE_URL` | Kết nối Postgres — **phải trỏ cùng database với `backend-cms`** |
 | `REDIS_URL` | Kết nối Redis |
 | `JWT_SECRET`, `JWT_REFRESH_SECRET` | Secret ký JWT — **khác với `backend-cms`** để token 2 bên không dùng chéo được |
+| `JWT_RESET_SECRET` | Secret riêng ký token đặt lại mật khẩu — **khác `JWT_SECRET`/`JWT_REFRESH_SECRET`** để lộ 1 cái không kéo theo cái kia |
 | `JWT_ACCESS_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN` | Thời hạn token (mặc định `15m` / `7d`) |
+| `THROTTLE_TTL`, `THROTTLE_LIMIT` | Cửa sổ (giây) và số request tối đa / IP cho rate limit toàn cục (mặc định `60` / `60`) |
+| `TRUST_PROXY` | `true` khi chạy sau reverse proxy để lấy đúng IP client; bỏ trống thì tự bật khi `NODE_ENV=production` |
 | `PORT` | Mặc định `3001` |
 | `WEB_ORIGIN` | Origin của `frontend-website` được phép gọi CORS (mặc định `http://localhost:3000`) |
 | `CLOUDINARY_*` | *(không dùng ở backend này — upload ảnh chỉ có ở backend-cms)* |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Cấu hình gửi email (quên mật khẩu, chào mừng khi đăng ký). Để trống thì `MailService` tự fallback log ra console thay vì gửi thật — không bắt buộc ở dev local |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Cấu hình gửi email (quên mật khẩu, chào mừng khi đăng ký, thông báo thay đổi bảo mật — đổi mật khẩu/email/SĐT). Để trống thì `MailService` tự fallback log ra console thay vì gửi thật — không bắt buộc ở dev local |
 | `SENTRY_DSN` | DSN của Sentry để forward lỗi 5xx — để trống thì bỏ qua, không bắt buộc ở dev local |
 
 ## Prisma — ai chạy migration?

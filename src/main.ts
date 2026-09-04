@@ -14,7 +14,10 @@ async function bootstrap() {
 
   app.useLogger(app.get(PinoLogger));
   app.use(helmet());
-  if (process.env.TRUST_PROXY === 'true') {
+  const trustProxy = process.env.TRUST_PROXY
+    ? process.env.TRUST_PROXY === 'true'
+    : process.env.NODE_ENV === 'production';
+  if (trustProxy) {
     (app.getHttpAdapter().getInstance() as import('express').Application).set(
       'trust proxy',
       1,

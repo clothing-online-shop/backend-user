@@ -1,5 +1,6 @@
 import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { InternalApiKeyGuard } from '../../common/guards/internal-api-key.guard';
 import { OrdersService } from '../orders/orders.service';
 import { NotifyOrderStatusDto } from './dto/notify-order-status.dto';
@@ -8,6 +9,7 @@ import { NotifyOrderStatusDto } from './dto/notify-order-status.dto';
 // công khai bằng ApiExcludeController thay vì chỉ ẩn qua guard.
 @ApiTags('internal')
 @ApiExcludeController()
+@SkipThrottle()
 @Controller('internal/orders')
 @UseGuards(InternalApiKeyGuard)
 export class InternalOrdersController {

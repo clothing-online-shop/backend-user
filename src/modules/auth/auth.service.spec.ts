@@ -58,7 +58,7 @@ function createHarness() {
 
   const redis = {
     get: jest.fn(),
-    set: jest.fn(),
+    set: jest.fn().mockResolvedValue('OK'),
     del: jest.fn(),
     incr: jest.fn(),
     expire: jest.fn(),
@@ -262,39 +262,68 @@ describe('AuthService reset token jti', () => {
 });
 
 describe('AuthService.forgotPassword cooldown', () => {
-  it('does not send a second email while the cooldown is active', async () => {
+  const cooldownKey = 'pwd-reset-cooldown:u@b.com';
+
+  it('does not send when the cooldown is already held', async () => {
     const h = createHarness();
     (h.usersService.findByEmail as jest.Mock).mockResolvedValue({
       id: 'u1',
       email: 'u@b.com',
     });
-    (h.redis.exists as jest.Mock).mockResolvedValue(1);
+    // The cooldown `SET NX` is the first redis.set call in the flow — a null
+    // result means another request already holds the cooldown.
+    (h.redis.set as jest.Mock).mockResolvedValueOnce(null);
 
     await h.service.forgotPassword('u@b.com');
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(h.mailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const resetSign = (h.jwtService.signAsync as jest.Mock).mock.calls.find(
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      ([payload]) => payload?.purpose === 'reset-password',
+    );
+    expect(resetSign).toBeUndefined();
   });
 
-  it('sends and sets the cooldown key when not on cooldown', async () => {
+  it('acquires the cooldown and sends when free', async () => {
     const h = createHarness();
     (h.usersService.findByEmail as jest.Mock).mockResolvedValue({
       id: 'u1',
       email: 'u@b.com',
     });
-    (h.redis.exists as jest.Mock).mockResolvedValue(0);
+    (h.redis.set as jest.Mock).mockResolvedValue('OK');
 
     await h.service.forgotPassword('u@b.com');
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(h.mailService.sendPasswordResetEmail).toHaveBeenCalled();
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const setCall = (h.redis.set as jest.Mock).mock.calls.find(([k]) =>
-      String(k).startsWith('pwd-reset-cooldown:u@b.com'),
+
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const setMock = h.redis.set as jest.Mock;
+    const acquireCallIndex = setMock.mock.calls.findIndex(
+      ([k]) => k === cooldownKey,
     );
-    expect(setCall).toBeDefined();
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-    expect(setCall?.slice(-2)).toEqual(['EX', 60]);
+    expect(acquireCallIndex).toBeGreaterThanOrEqual(0);
+    expect(setMock.mock.calls[acquireCallIndex]).toEqual([
+      cooldownKey,
+      '1',
+      'EX',
+      60,
+      'NX',
+    ]);
+
+    // The cooldown acquire must happen before the mail send.
+    const acquireOrder = setMock.mock.invocationCallOrder[acquireCallIndex];
+    const sendOrder = (h.mailService.sendPasswordResetEmail as jest.Mock).mock
+      .invocationCallOrder[0];
+    expect(acquireOrder).toBeLessThan(sendOrder);
+
+    // No post-send trailing write for the cooldown key (old code path is gone).
+    const cooldownSetCount = setMock.mock.calls.filter(
+      ([k]) => k === cooldownKey,
+    ).length;
+    expect(cooldownSetCount).toBe(1);
   });
 });
 

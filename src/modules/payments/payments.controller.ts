@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -64,6 +65,7 @@ export class PaymentsController {
 
   // Public — VNPay gọi server-to-server (IPN), không mang Bearer token.
   @Post('vnpay/ipn')
+  @SkipThrottle()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'VNPay IPN — nguồn xác thực chính cho kết quả thanh toán',
