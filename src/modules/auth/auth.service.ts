@@ -33,6 +33,8 @@ const RESET_TOKEN_SECRET_KEY = 'JWT_RESET_SECRET';
 const RESET_TOKEN_SECRET_DEFAULT = 'change-me-reset-secret';
 const RESET_JTI_PREFIX = 'pwd-reset-jti:';
 const RESET_TOKEN_TTL_SECONDS = 10 * 60;
+const RESET_COOLDOWN_PREFIX = 'pwd-reset-cooldown:';
+const RESET_COOLDOWN_SECONDS = 60;
 const REGISTER_OTP_PURPOSE = 'register';
 const LOGIN_LOCKOUT_TTL_SECONDS = 15 * 60;
 const LOGIN_MAX_ATTEMPTS = 5;
@@ -236,6 +238,11 @@ export class AuthService {
       return;
     }
 
+    const cooldownKey = `${RESET_COOLDOWN_PREFIX}${normalized}`;
+    if (await this.redis.exists(cooldownKey)) {
+      return;
+    }
+
     const jti = randomUUID();
     const resetToken = await this.jwtService.signAsync(
       { sub: user.id, purpose: RESET_TOKEN_PURPOSE, jti },
@@ -263,6 +270,8 @@ export class AuthService {
     );
     const resetLink = `${webOrigin}/reset-password?token=${resetToken}`;
     await this.mailService.sendPasswordResetEmail(normalized, resetLink);
+
+    await this.redis.set(cooldownKey, '1', 'EX', RESET_COOLDOWN_SECONDS);
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
