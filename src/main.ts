@@ -14,6 +14,12 @@ async function bootstrap() {
 
   app.useLogger(app.get(PinoLogger));
   app.use(helmet());
+  if (process.env.TRUST_PROXY === 'true') {
+    (app.getHttpAdapter().getInstance() as import('express').Application).set(
+      'trust proxy',
+      1,
+    );
+  }
   app.enableCors({
     origin: process.env.WEB_ORIGIN ?? 'http://localhost:3000',
     credentials: true,

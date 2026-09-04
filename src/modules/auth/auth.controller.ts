@@ -8,6 +8,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -27,12 +28,14 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @Throttle({ default: { limit: 5, ttl: 600_000 } })
   @ApiOperation({ summary: 'Đăng ký tài khoản khách hàng' })
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
   }
 
   @Post('verify-otp')
+  @Throttle({ default: { limit: 10, ttl: 300_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Xác thực mã OTP 6 số gửi qua email khi đăng ký',
@@ -42,6 +45,7 @@ export class AuthController {
   }
 
   @Post('resend-otp')
+  @Throttle({ default: { limit: 5, ttl: 900_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Gửi lại mã OTP (giới hạn 60 giây/lần)' })
   resendOtp(@Body() dto: ResendOtpDto) {
@@ -49,6 +53,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @Throttle({ default: { limit: 10, ttl: 300_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Đăng nhập bằng email hoặc SĐT, trả về access/refresh token',
@@ -75,6 +80,7 @@ export class AuthController {
   }
 
   @Post('forgot-password')
+  @Throttle({ default: { limit: 5, ttl: 900_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Gửi link đặt lại mật khẩu (log ra console ở giai đoạn dev)',
@@ -87,6 +93,7 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @Throttle({ default: { limit: 10, ttl: 300_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Đặt lại mật khẩu bằng token' })
   async resetPassword(@Body() dto: ResetPasswordDto) {

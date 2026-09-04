@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './config/prisma.module';
 import { RedisModule } from './config/redis.module';
+import { AppThrottlerModule } from './common/throttler/throttler.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { ProductsModule } from './modules/products/products.module';
@@ -38,6 +39,7 @@ import { BlogPostsModule } from './modules/blog-posts/blog-posts.module';
     }),
     PrismaModule,
     RedisModule,
+    AppThrottlerModule,
     AuthModule,
     UsersModule,
     ProductsModule,
