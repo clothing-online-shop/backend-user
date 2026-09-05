@@ -320,7 +320,7 @@ export class AuthService {
     const attempts = await this.redis.get(loginFailKey(identifier));
     if (attempts && Number(attempts) >= LOGIN_MAX_ATTEMPTS) {
       throw new UnauthorizedException(
-        'Tài khoản tạm khóa do đăng nhập sai quá 5 lần, vui lòng thử lại sau ít phút.',
+        'Tài khoản tạm khóa do đăng nhập sai quá 5 lần, vui lòng thử lại sau 15 phút.',
       );
     }
   }
