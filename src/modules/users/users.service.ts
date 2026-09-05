@@ -236,20 +236,12 @@ export class UsersService {
     return err as Error;
   }
 
+  // Trước đây tự che SĐT ở đây ("090****567") — nhưng login (AuthService, toSafeUser) lại
+  // trả SĐT nguyên, nên tuỳ lần gọi API nào set lại user cuối cùng mà FE có lúc thấy SĐT
+  // thật, có lúc thấy bản che, không nhất quán. FE tự lo việc che khi hiển thị (lib/format.ts
+  // maskPhone, chỉ áp khi field đang khoá) nên BE trả nguyên cho mọi endpoint self-service —
+  // đây là hồ sơ của chính chủ tài khoản, không phải hiển thị công khai.
   private toProfileResponse(user: User) {
-    return {
-      ...toSafeUser(user),
-      phone: user.phone ? maskPhone(user.phone) : null,
-    };
+    return toSafeUser(user);
   }
-}
-
-// Ẩn 1 phần SĐT khi trả về hồ sơ — giữ 3 số đầu + 3 số cuối, che phần giữa (vd
-// "0901234567" -> "090****567"). SĐT ngắn bất thường (<=6 ký tự) trả nguyên, không có gì
-// để che mà không mất hết thông tin.
-function maskPhone(phone: string): string {
-  if (phone.length <= 6) return phone;
-  const visibleStart = phone.slice(0, 3);
-  const visibleEnd = phone.slice(-3);
-  return `${visibleStart}${'*'.repeat(phone.length - 6)}${visibleEnd}`;
 }
