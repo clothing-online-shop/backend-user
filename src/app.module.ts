@@ -12,6 +12,7 @@ import { CategoriesModule } from './modules/categories/categories.module';
 import { CartModule } from './modules/cart/cart.module';
 import { WishlistModule } from './modules/wishlist/wishlist.module';
 import { RecentlyViewedModule } from './modules/recently-viewed/recently-viewed.module';
+import { SearchHistoryModule } from './modules/search-history/search-history.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AddressesModule } from './modules/addresses/addresses.module';
@@ -46,6 +47,7 @@ import { UploadModule } from './modules/upload/upload.module';
     CartModule,
     WishlistModule,
     RecentlyViewedModule,
+    SearchHistoryModule,
     OrdersModule,
     PaymentsModule,
     AddressesModule,
