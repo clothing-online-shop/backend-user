@@ -28,7 +28,7 @@ export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Xem hồ sơ cá nhân (SĐT hiển thị ẩn 1 phần)' })
+  @ApiOperation({ summary: 'Xem hồ sơ cá nhân' })
   getProfile(@CurrentUser() user: AuthenticatedUser) {
     return this.usersService.getProfile(user.id);
   }

@@ -23,6 +23,7 @@ import { BannersModule } from './modules/banners/banners.module';
 import { PopupsModule } from './modules/popups/popups.module';
 import { FlashSalesModule } from './modules/flash-sales/flash-sales.module';
 import { BlogPostsModule } from './modules/blog-posts/blog-posts.module';
+import { UploadModule } from './modules/upload/upload.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { BlogPostsModule } from './modules/blog-posts/blog-posts.module';
     PopupsModule,
     FlashSalesModule,
     BlogPostsModule,
+    UploadModule,
   ],
   controllers: [AppController],
   providers: [AppService],
