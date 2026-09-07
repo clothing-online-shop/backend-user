@@ -1,8 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Category } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
+import { ProductStatus } from '../products/product-status.enum';
 
 export interface CategoryTreeNode extends Category {
+  productCount: number;
   children: CategoryTreeNode[];
 }
 
@@ -19,7 +21,20 @@ export class CategoriesService {
       orderBy: { sortOrder: 'asc' },
     });
 
-    return pruneInactive(buildTree(categories));
+    // 1 query group-by duy nhất cho toàn bộ đếm trực tiếp (không N+1 theo từng node) — cộng
+    // dồn lên cha ở addProductCounts() bên dưới để productCount của cha = tổng của cả nhánh
+    // con (khớp yêu cầu hiển thị số lượng sản phẩm cạnh danh mục ở trang danh sách sản phẩm).
+    const counts = await this.prisma.product.groupBy({
+      by: ['categoryId'],
+      where: { status: ProductStatus.ACTIVE },
+      _count: true,
+    });
+    const directCountMap = new Map(counts.map((c) => [c.categoryId, c._count]));
+
+    return addProductCounts(
+      pruneInactive(buildTree(categories)),
+      directCountMap,
+    );
   }
 
   async findBySlug(slug: string) {
@@ -61,7 +76,9 @@ export class CategoriesService {
 
 function buildTree(categories: Category[]): CategoryTreeNode[] {
   const nodeMap = new Map<string, CategoryTreeNode>();
-  categories.forEach((c) => nodeMap.set(c.id, { ...c, children: [] }));
+  categories.forEach((c) =>
+    nodeMap.set(c.id, { ...c, productCount: 0, children: [] }),
+  );
 
   const roots: CategoryTreeNode[] = [];
   for (const category of categories) {
@@ -80,4 +97,24 @@ function pruneInactive(nodes: CategoryTreeNode[]): CategoryTreeNode[] {
   return nodes
     .filter((node) => node.isActive)
     .map((node) => ({ ...node, children: pruneInactive(node.children) }));
+}
+
+// Gán productCount SAU pruneInactive() — danh mục ẩn không được cộng vào tổng của cha, khớp
+// đúng logic isActive cascade đã áp dụng cho toàn bộ cây (xem comment ở findTree()).
+function addProductCounts(
+  nodes: CategoryTreeNode[],
+  directCountMap: Map<string, number>,
+): CategoryTreeNode[] {
+  return nodes.map((node) => {
+    const children = addProductCounts(node.children, directCountMap);
+    const childrenTotal = children.reduce(
+      (sum, child) => sum + child.productCount,
+      0,
+    );
+    return {
+      ...node,
+      children,
+      productCount: (directCountMap.get(node.id) ?? 0) + childrenTotal,
+    };
+  });
 }
