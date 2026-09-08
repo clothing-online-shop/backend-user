@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Product, ProductVariant } from '@prisma/client';
+import { OrderStatus, Prisma, Product, ProductVariant } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
 import { ProductStatus } from './product-status.enum';
 import {
@@ -8,7 +8,7 @@ import {
 } from './dto/list-products-query.dto';
 
 type ProductWithStockVariants = Product & {
-  variants: { stockQuantity: number; color: string }[];
+  variants: { stockQuantity: number; color: string; size: string }[];
   brand?: { name: string } | null;
 };
 
@@ -50,6 +50,10 @@ export class ProductsService {
       };
     }
 
+    if (query.brand) {
+      where.brandId = { in: query.brand.split(',') };
+    }
+
     // Giữ where trước khi gắn điều kiện search để nhánh fuzzy fallback bên dưới
     // tái dùng đúng các filter category/price/size/color, không lặp lại logic.
     const baseWhere: Prisma.ProductWhereInput = { ...where };
@@ -69,7 +73,9 @@ export class ProductsService {
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          variants: { select: { stockQuantity: true, color: true } },
+          variants: {
+            select: { stockQuantity: true, color: true, size: true },
+          },
           brand: { select: { name: true } },
         },
       }),
@@ -132,7 +138,7 @@ export class ProductsService {
     const products = await this.prisma.product.findMany({
       where: { ...baseWhere, id: { in: orderedIds } },
       include: {
-        variants: { select: { stockQuantity: true, color: true } },
+        variants: { select: { stockQuantity: true, color: true, size: true } },
         brand: { select: { name: true } },
       },
     });
@@ -219,7 +225,10 @@ export class ProductsService {
       include: {
         category: true,
         variants: true,
-        reviews: { orderBy: { createdAt: 'desc' } },
+        reviews: {
+          orderBy: { createdAt: 'desc' },
+          include: { user: { select: { fullName: true } } },
+        },
         brand: { select: { name: true } },
       },
     });
@@ -229,21 +238,39 @@ export class ProductsService {
       throw new NotFoundException('Không tìm thấy sản phẩm');
     }
 
-    const [relatedProducts, ancestors] = await Promise.all([
-      this.prisma.product.findMany({
-        where: {
-          categoryId: product.categoryId,
-          id: { not: product.id },
-          status: ProductStatus.ACTIVE,
-        },
-        include: {
-          variants: { select: { stockQuantity: true, color: true } },
-          brand: { select: { name: true } },
-        },
-        take: RELATED_PRODUCTS_LIMIT,
-      }),
-      this.resolveCategoryAncestors(product.category.parentId),
-    ]);
+    const [relatedProducts, ancestors, reviewCounts, soldResult] =
+      await Promise.all([
+        this.prisma.product.findMany({
+          where: {
+            categoryId: product.categoryId,
+            id: { not: product.id },
+            status: ProductStatus.ACTIVE,
+          },
+          include: {
+            variants: {
+              select: { stockQuantity: true, color: true, size: true },
+            },
+            brand: { select: { name: true } },
+          },
+          take: RELATED_PRODUCTS_LIMIT,
+        }),
+        this.resolveCategoryAncestors(product.category.parentId),
+        this.prisma.review.groupBy({
+          by: ['rating'],
+          where: { productId: product.id },
+          _count: true,
+        }),
+        // Chỉ tính đơn COMPLETED — "đã bán" phải là đơn thực sự hoàn tất, không tính đơn
+        // đang xử lý/đã hủy. OrderItem không có productId trực tiếp (chỉ có
+        // productVariantId), lọc qua quan hệ productVariant.product.
+        this.prisma.orderItem.aggregate({
+          where: {
+            productVariant: { productId: product.id },
+            order: { status: OrderStatus.COMPLETED },
+          },
+          _sum: { quantity: true },
+        }),
+      ]);
 
     return {
       ...toListItem(product),
@@ -260,7 +287,16 @@ export class ProductsService {
         ancestors,
       },
       variants: product.variants.map(toVariantDto),
-      reviews: product.reviews,
+      reviews: product.reviews.map((review) => ({
+        id: review.id,
+        productId: review.productId,
+        reviewerName: maskReviewerName(review.user.fullName),
+        rating: review.rating,
+        comment: review.comment,
+        createdAt: review.createdAt,
+      })),
+      reviewSummary: buildReviewSummary(reviewCounts),
+      soldCount: soldResult._sum.quantity ?? 0,
       relatedProducts: relatedProducts.map(toListItem),
     };
   }
@@ -352,6 +388,7 @@ function toListItem(product: ProductWithStockVariants) {
     categoryId: product.categoryId,
     totalStock: product.variants.reduce((sum, v) => sum + v.stockQuantity, 0),
     colors: [...new Set(product.variants.map((v) => v.color))],
+    sizes: [...new Set(product.variants.map((v) => v.size))],
     createdAt: product.createdAt,
   };
 }
@@ -365,5 +402,34 @@ function toVariantDto(variant: ProductVariant) {
     price: variant.price.toNumber(),
     stockQuantity: variant.stockQuantity,
     imageUrl: variant.imageUrl,
+  };
+}
+
+// Không trả tên đầy đủ của khách ra API public — che theo kiểu "Mai N." (giữ từ cuối trong
+// fullName vì người Việt xưng hô bằng tên gọi/tên đệm cuối, viết tắt chữ đầu của từ đầu tiên
+// làm họ). Tên 1 từ (không có khoảng trắng) thì giữ nguyên, không có gì để viết tắt.
+function maskReviewerName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length < 2) return parts[0] ?? 'Khách hàng';
+  return `${parts[parts.length - 1]} ${parts[0][0].toUpperCase()}.`;
+}
+
+function buildReviewSummary(counts: { rating: number; _count: number }[]): {
+  average: number;
+  count: number;
+  breakdown: Record<number, number>;
+} {
+  const breakdown: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let total = 0;
+  let weightedSum = 0;
+  for (const { rating, _count } of counts) {
+    breakdown[rating] = _count;
+    total += _count;
+    weightedSum += rating * _count;
+  }
+  return {
+    average: total > 0 ? Math.round((weightedSum / total) * 10) / 10 : 0,
+    count: total,
+    breakdown,
   };
 }

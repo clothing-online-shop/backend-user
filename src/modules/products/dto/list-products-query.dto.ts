@@ -46,6 +46,13 @@ export class ListProductsQueryDto {
   @IsString()
   color?: string;
 
+  @ApiPropertyOptional({
+    description: 'Danh sách id thương hiệu, phân tách bởi dấu phẩy',
+  })
+  @IsOptional()
+  @IsString()
+  brand?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
