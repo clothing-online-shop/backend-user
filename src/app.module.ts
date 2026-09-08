@@ -24,6 +24,7 @@ import { BannersModule } from './modules/banners/banners.module';
 import { PopupsModule } from './modules/popups/popups.module';
 import { PromoBarsModule } from './modules/promo-bars/promo-bars.module';
 import { BrandsModule } from './modules/brands/brands.module';
+import { ColorsModule } from './modules/colors/colors.module';
 import { FlashSalesModule } from './modules/flash-sales/flash-sales.module';
 import { BlogPostsModule } from './modules/blog-posts/blog-posts.module';
 import { UploadModule } from './modules/upload/upload.module';
@@ -47,6 +48,7 @@ import { UploadModule } from './modules/upload/upload.module';
     ProductsModule,
     CategoriesModule,
     BrandsModule,
+    ColorsModule,
     CartModule,
     WishlistModule,
     RecentlyViewedModule,
