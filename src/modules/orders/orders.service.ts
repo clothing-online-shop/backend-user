@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -6,6 +7,7 @@ import {
 } from '@nestjs/common';
 import {
   OrderStatus,
+  PaymentStatus,
   Prisma,
   StockMovementType,
   Voucher,
@@ -17,6 +19,7 @@ import { generateOrderCode } from '../../common/utils/order-code.util';
 import { resolveOwnedCartItems } from '../../common/utils/cart-items.util';
 import { VouchersService } from '../vouchers/vouchers.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
 
 const ORDER_CODE_MAX_RETRIES = 3;
 
@@ -295,6 +298,114 @@ export class OrdersService {
     return toOrderResponse(order);
   }
 
+  // Dùng cho trang "Đơn hàng của tôi" — phân trang + lọc theo nhóm trạng thái (FE gộp nhiều
+  // OrderStatus vào 1 tab, vd tab "Đang giao" = CONFIRMED+PACKING+HANDED_OVER+SHIPPING, xem
+  // ORDER_LIST_TABS ở FE). page/limit đã được validate >= 1 ở DTO, không cần check lại.
+  async listMyOrders(userId: string, query: ListOrdersQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const where: Prisma.OrderWhereInput = {
+      userId,
+      ...(query.status
+        ? { status: { in: parseStatusFilter(query.status) } }
+        : {}),
+    };
+
+    const [orders, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        include: { items: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      data: orders.map(toOrderResponse),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    };
+  }
+
+  // Khách tự hủy đơn của chính mình — CHỈ khi đơn còn PENDING (chưa được shop xác nhận).
+  // Khác hẳn updateStatus() bên backend-cms (admin có thể hủy từ mọi trạng thái, kể cả
+  // SHIPPING) — đây là hành động tự phục vụ của khách nên giới hạn an toàn ở bước sớm nhất,
+  // lúc chắc chắn hàng chưa rời kho vật lý.
+  async cancelOrder(userId: string, orderCode: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { orderCode },
+      include: { items: true },
+    });
+    if (!order || order.userId !== userId) {
+      throw new NotFoundException('Không tìm thấy đơn hàng.');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new ConflictException(
+        'Chỉ có thể hủy đơn khi đơn đang ở trạng thái chờ xác nhận.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const item of order.items) {
+        await tx.stockMovement.create({
+          data: {
+            productVariantId: item.productVariantId,
+            type: StockMovementType.IMPORT,
+            quantity: item.quantity,
+            createdById: null,
+          },
+        });
+        await tx.productVariant.update({
+          where: { id: item.productVariantId },
+          data: { stockQuantity: { increment: item.quantity } },
+        });
+      }
+
+      if (order.voucherId) {
+        await tx.voucher.update({
+          where: { id: order.voucherId },
+          data: { usedCount: { decrement: 1 } },
+        });
+      }
+
+      // where kèm status cũ — optimistic guard: 1 request khác (vd admin xác nhận đơn) xen
+      // giữa lúc đọc order ở trên và transaction này chạy thì rollback toàn bộ (kể cả hoàn
+      // kho/voucher vừa ghi) thay vì âm thầm hủy đè lên 1 trạng thái đã đổi.
+      const updated = await tx.order.updateMany({
+        where: { id: order.id, status: OrderStatus.PENDING },
+        data: {
+          status: OrderStatus.CANCELLED,
+          ...(order.paymentStatus === PaymentStatus.PAID
+            ? { paymentStatus: PaymentStatus.REFUNDED }
+            : {}),
+        },
+      });
+      if (updated.count === 0) {
+        throw new ConflictException(
+          'Đơn hàng vừa được cập nhật, vui lòng thử lại.',
+        );
+      }
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: order.id,
+          fromStatus: OrderStatus.PENDING,
+          toStatus: OrderStatus.CANCELLED,
+          note: 'Khách hàng tự hủy đơn',
+          changedById: userId,
+        },
+      });
+    });
+
+    return this.getOrderByCode(userId, orderCode);
+  }
+
   // SELECT ... FOR UPDATE khoá các dòng ProductVariant liên quan, sắp theo id tăng dần
   // (variantIds đã được sort trước khi gọi) — đảm bảo 2 đơn hàng chứa chung sản phẩm luôn
   // lock theo cùng 1 thứ tự, tránh deadlock. Cùng lý do đã áp dụng cho lockVariant() ở
@@ -436,6 +547,23 @@ export class OrdersService {
       );
     }
   }
+}
+
+// Tách + validate danh sách status truyền qua query (vd "CONFIRMED,PACKING") — khác filter
+// `brand` bên products.service.ts (chỉ là id tự do, Prisma "in" với id rác đơn giản không
+// khớp gì), `status` là cột enum thật trong Postgres nên 1 giá trị sai sẽ khiến Prisma throw
+// lỗi runtime khó hiểu thay vì "không tìm thấy" — validate rõ ràng ở đây để trả 400 sớm.
+function parseStatusFilter(raw: string): OrderStatus[] {
+  const values = raw.split(',').map((v) => v.trim());
+  const validValues = Object.values(OrderStatus) as string[];
+  for (const value of values) {
+    if (!validValues.includes(value)) {
+      throw new BadRequestException(
+        `Trạng thái đơn hàng không hợp lệ: "${value}".`,
+      );
+    }
+  }
+  return values as OrderStatus[];
 }
 
 // Prisma.Decimal.toJSON() trả về string (vd "300000"), không phải number — nếu để nguyên
