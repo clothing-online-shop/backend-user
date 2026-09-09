@@ -296,7 +296,12 @@ export class ProductsService {
         createdAt: review.createdAt,
       })),
       reviewSummary: buildReviewSummary(reviewCounts),
-      soldCount: soldResult._sum.quantity ?? 0,
+      displayRating: buildDisplayRating(
+        reviewCounts,
+        product.fakeReviewCount,
+        product.fakeRatingAverage,
+      ),
+      soldCount: (soldResult._sum.quantity ?? 0) + product.fakeSoldCount,
       relatedProducts: relatedProducts.map(toListItem),
     };
   }
@@ -431,5 +436,29 @@ function buildReviewSummary(counts: { rating: number; _count: number }[]): {
     average: total > 0 ? Math.round((weightedSum / total) * 10) / 10 : 0,
     count: total,
     breakdown,
+  };
+}
+
+// Số hiển thị cạnh tên sản phẩm (ProductRatingRow) — cộng dồn đánh giá ẢO (admin tự nhập ở
+// CMS, xem Product.fakeReviewCount/fakeRatingAverage) với đánh giá THẬT, KHÔNG dùng để hiện
+// breakdown theo sao hay danh sách review (đánh giá ảo không có nội dung review kèm theo) —
+// 2 chỗ đó vẫn dùng buildReviewSummary() ở trên, chỉ tính đúng dữ liệu thật, để không lệch
+// giữa số "126 đánh giá" hiển thị và số review thật sự liệt kê được bên dưới.
+function buildDisplayRating(
+  reviewCounts: { rating: number; _count: number }[],
+  fakeReviewCount: number,
+  fakeRatingAverage: number,
+): { average: number; count: number } {
+  let realCount = 0;
+  let realWeightedSum = 0;
+  for (const { rating, _count } of reviewCounts) {
+    realCount += _count;
+    realWeightedSum += rating * _count;
+  }
+  const count = realCount + fakeReviewCount;
+  const weightedSum = realWeightedSum + fakeReviewCount * fakeRatingAverage;
+  return {
+    average: count > 0 ? Math.round((weightedSum / count) * 10) / 10 : 0,
+    count,
   };
 }
