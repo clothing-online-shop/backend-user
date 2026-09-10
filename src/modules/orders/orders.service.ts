@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   OrderStatus,
+  PaymentStatus,
   Prisma,
   StockMovementType,
   Voucher,
@@ -15,8 +16,10 @@ import { MailService } from '../mail/mail.service';
 import { isProductAvailable } from '../../common/utils/product-availability.util';
 import { generateOrderCode } from '../../common/utils/order-code.util';
 import { resolveOwnedCartItems } from '../../common/utils/cart-items.util';
+import { applyStockMovement } from '../../common/utils/stock-movement.util';
 import { VouchersService } from '../vouchers/vouchers.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
 
 const ORDER_CODE_MAX_RETRIES = 3;
 
@@ -176,17 +179,10 @@ export class OrdersService {
           }
 
           for (const item of cartItems) {
-            await tx.stockMovement.create({
-              data: {
-                productVariantId: item.productVariantId,
-                type: StockMovementType.EXPORT,
-                quantity: -item.quantity,
-                createdById: null,
-              },
-            });
-            await tx.productVariant.update({
-              where: { id: item.productVariantId },
-              data: { stockQuantity: { decrement: item.quantity } },
+            await applyStockMovement(tx, {
+              productVariantId: item.productVariantId,
+              type: StockMovementType.EXPORT,
+              quantity: item.quantity,
             });
           }
 
@@ -293,6 +289,100 @@ export class OrdersService {
       throw new NotFoundException('Không tìm thấy đơn hàng.');
     }
     return toOrderResponse(order);
+  }
+
+  // Danh sách đơn của user — phân trang, lọc theo nhiều OrderStatus cùng lúc (đã validate ở DTO).
+  async listMyOrders(userId: string, query: ListOrdersQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const where: Prisma.OrderWhereInput = {
+      userId,
+      ...(query.status?.length ? { status: { in: query.status } } : {}),
+    };
+
+    const [orders, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        include: { items: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      data: orders.map(toOrderResponse),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    };
+  }
+
+  // Khách tự hủy đơn — chỉ cho phép khi đơn còn PENDING (khác admin bên backend-cms hủy được
+  // từ mọi trạng thái). Hoàn kho + hoàn lượt voucher + REFUNDED nếu đã PAID, tất cả trong 1 tx.
+  async cancelOrder(userId: string, orderCode: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { orderCode },
+      include: { items: true },
+    });
+    if (!order || order.userId !== userId) {
+      throw new NotFoundException('Không tìm thấy đơn hàng.');
+    }
+    if (order.status !== OrderStatus.PENDING) {
+      throw new ConflictException(
+        'Chỉ có thể hủy đơn khi đơn đang ở trạng thái chờ xác nhận.',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const item of order.items) {
+        await applyStockMovement(tx, {
+          productVariantId: item.productVariantId,
+          type: StockMovementType.IMPORT,
+          quantity: item.quantity,
+        });
+      }
+
+      if (order.voucherId) {
+        await tx.voucher.update({
+          where: { id: order.voucherId },
+          data: { usedCount: { decrement: 1 } },
+        });
+      }
+
+      // where kèm status cũ — optimistic guard: nếu admin đổi trạng thái xen vào giữa, count = 0
+      // → throw → rollback cả phần hoàn kho/voucher vừa ghi, không hủy đè lên trạng thái mới.
+      const updated = await tx.order.updateMany({
+        where: { id: order.id, status: OrderStatus.PENDING },
+        data: {
+          status: OrderStatus.CANCELLED,
+          ...(order.paymentStatus === PaymentStatus.PAID
+            ? { paymentStatus: PaymentStatus.REFUNDED }
+            : {}),
+        },
+      });
+      if (updated.count === 0) {
+        throw new ConflictException(
+          'Đơn hàng vừa được cập nhật, vui lòng thử lại.',
+        );
+      }
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: order.id,
+          fromStatus: OrderStatus.PENDING,
+          toStatus: OrderStatus.CANCELLED,
+          note: 'Khách hàng tự hủy đơn',
+          changedById: userId,
+        },
+      });
+    });
+
+    return this.getOrderByCode(userId, orderCode);
   }
 
   // SELECT ... FOR UPDATE khoá các dòng ProductVariant liên quan, sắp theo id tăng dần
