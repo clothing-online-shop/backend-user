@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -17,6 +16,7 @@ import { MailService } from '../mail/mail.service';
 import { isProductAvailable } from '../../common/utils/product-availability.util';
 import { generateOrderCode } from '../../common/utils/order-code.util';
 import { resolveOwnedCartItems } from '../../common/utils/cart-items.util';
+import { applyStockMovement } from '../../common/utils/stock-movement.util';
 import { VouchersService } from '../vouchers/vouchers.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
@@ -179,17 +179,10 @@ export class OrdersService {
           }
 
           for (const item of cartItems) {
-            await tx.stockMovement.create({
-              data: {
-                productVariantId: item.productVariantId,
-                type: StockMovementType.EXPORT,
-                quantity: -item.quantity,
-                createdById: null,
-              },
-            });
-            await tx.productVariant.update({
-              where: { id: item.productVariantId },
-              data: { stockQuantity: { decrement: item.quantity } },
+            await applyStockMovement(tx, {
+              productVariantId: item.productVariantId,
+              type: StockMovementType.EXPORT,
+              quantity: item.quantity,
             });
           }
 
@@ -298,17 +291,13 @@ export class OrdersService {
     return toOrderResponse(order);
   }
 
-  // Dùng cho trang "Đơn hàng của tôi" — phân trang + lọc theo nhóm trạng thái (FE gộp nhiều
-  // OrderStatus vào 1 tab, vd tab "Đang giao" = CONFIRMED+PACKING+HANDED_OVER+SHIPPING, xem
-  // ORDER_LIST_TABS ở FE). page/limit đã được validate >= 1 ở DTO, không cần check lại.
+  // Danh sách đơn của user — phân trang, lọc theo nhiều OrderStatus cùng lúc (đã validate ở DTO).
   async listMyOrders(userId: string, query: ListOrdersQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const where: Prisma.OrderWhereInput = {
       userId,
-      ...(query.status
-        ? { status: { in: parseStatusFilter(query.status) } }
-        : {}),
+      ...(query.status?.length ? { status: { in: query.status } } : {}),
     };
 
     const [orders, total] = await this.prisma.$transaction([
@@ -333,10 +322,8 @@ export class OrdersService {
     };
   }
 
-  // Khách tự hủy đơn của chính mình — CHỈ khi đơn còn PENDING (chưa được shop xác nhận).
-  // Khác hẳn updateStatus() bên backend-cms (admin có thể hủy từ mọi trạng thái, kể cả
-  // SHIPPING) — đây là hành động tự phục vụ của khách nên giới hạn an toàn ở bước sớm nhất,
-  // lúc chắc chắn hàng chưa rời kho vật lý.
+  // Khách tự hủy đơn — chỉ cho phép khi đơn còn PENDING (khác admin bên backend-cms hủy được
+  // từ mọi trạng thái). Hoàn kho + hoàn lượt voucher + REFUNDED nếu đã PAID, tất cả trong 1 tx.
   async cancelOrder(userId: string, orderCode: string) {
     const order = await this.prisma.order.findUnique({
       where: { orderCode },
@@ -353,17 +340,10 @@ export class OrdersService {
 
     await this.prisma.$transaction(async (tx) => {
       for (const item of order.items) {
-        await tx.stockMovement.create({
-          data: {
-            productVariantId: item.productVariantId,
-            type: StockMovementType.IMPORT,
-            quantity: item.quantity,
-            createdById: null,
-          },
-        });
-        await tx.productVariant.update({
-          where: { id: item.productVariantId },
-          data: { stockQuantity: { increment: item.quantity } },
+        await applyStockMovement(tx, {
+          productVariantId: item.productVariantId,
+          type: StockMovementType.IMPORT,
+          quantity: item.quantity,
         });
       }
 
@@ -374,9 +354,8 @@ export class OrdersService {
         });
       }
 
-      // where kèm status cũ — optimistic guard: 1 request khác (vd admin xác nhận đơn) xen
-      // giữa lúc đọc order ở trên và transaction này chạy thì rollback toàn bộ (kể cả hoàn
-      // kho/voucher vừa ghi) thay vì âm thầm hủy đè lên 1 trạng thái đã đổi.
+      // where kèm status cũ — optimistic guard: nếu admin đổi trạng thái xen vào giữa, count = 0
+      // → throw → rollback cả phần hoàn kho/voucher vừa ghi, không hủy đè lên trạng thái mới.
       const updated = await tx.order.updateMany({
         where: { id: order.id, status: OrderStatus.PENDING },
         data: {
@@ -547,23 +526,6 @@ export class OrdersService {
       );
     }
   }
-}
-
-// Tách + validate danh sách status truyền qua query (vd "CONFIRMED,PACKING") — khác filter
-// `brand` bên products.service.ts (chỉ là id tự do, Prisma "in" với id rác đơn giản không
-// khớp gì), `status` là cột enum thật trong Postgres nên 1 giá trị sai sẽ khiến Prisma throw
-// lỗi runtime khó hiểu thay vì "không tìm thấy" — validate rõ ràng ở đây để trả 400 sớm.
-function parseStatusFilter(raw: string): OrderStatus[] {
-  const values = raw.split(',').map((v) => v.trim());
-  const validValues = Object.values(OrderStatus) as string[];
-  for (const value of values) {
-    if (!validValues.includes(value)) {
-      throw new BadRequestException(
-        `Trạng thái đơn hàng không hợp lệ: "${value}".`,
-      );
-    }
-  }
-  return values as OrderStatus[];
 }
 
 // Prisma.Decimal.toJSON() trả về string (vd "300000"), không phải number — nếu để nguyên
