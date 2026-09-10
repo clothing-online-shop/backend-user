@@ -18,6 +18,7 @@ export class CategoriesService {
     // là root thay vì bị ẩn theo cha (bug đã gặp: prune sau khi dựng cây đầy đủ
     // mới cascade đúng, không có cách nào lọc đúng ngay tại query).
     const categories = await this.prisma.category.findMany({
+      where: { isDelete: false },
       orderBy: { sortOrder: 'asc' },
     });
 
@@ -39,10 +40,13 @@ export class CategoriesService {
 
   async findBySlug(slug: string) {
     const category = await this.prisma.category.findUnique({
-      where: { slug },
+      where: { slug, isDelete: false },
       include: {
         parent: true,
-        children: { where: { isActive: true }, orderBy: { sortOrder: 'asc' } },
+        children: {
+          where: { isActive: true, isDelete: false },
+          orderBy: { sortOrder: 'asc' },
+        },
       },
     });
 
