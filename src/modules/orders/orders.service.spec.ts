@@ -1015,6 +1015,24 @@ describe('OrdersService.getOrderByCode', () => {
           priceAtPurchase: new Prisma.Decimal('150000'),
         },
       ],
+      statusHistories: [
+        {
+          id: 'h-2',
+          fromStatus: 'PENDING',
+          toStatus: 'CONFIRMED',
+          note: null,
+          createdAt: new Date('2026-08-21T02:00:00Z'),
+          changedById: null,
+        },
+        {
+          id: 'h-1',
+          fromStatus: null,
+          toStatus: 'PENDING',
+          note: null,
+          createdAt: new Date('2026-08-21T01:00:00Z'),
+          changedById: null,
+        },
+      ],
     };
   }
 
@@ -1027,12 +1045,38 @@ describe('OrdersService.getOrderByCode', () => {
 
     expect(orderFindUnique).toHaveBeenCalledWith({
       where: { orderCode: 'DH20260821ABCDEF' },
-      include: { items: true },
+      include: {
+        items: true,
+        statusHistories: { orderBy: { createdAt: 'desc' } },
+      },
     });
     expect(result.orderCode).toBe('DH20260821ABCDEF');
     expect(typeof result.totalAmount).toBe('number');
     expect(result.totalAmount).toBe(300000);
     expect(typeof result.items[0].priceAtPurchase).toBe('number');
+  });
+
+  it('trả kèm statusHistories đã rút gọn (chỉ from/to/note/createdAt) cho FE dựng timeline', async () => {
+    const { prisma, mail, vouchers, orderFindUnique } = createGetOrderMocks();
+    orderFindUnique.mockResolvedValue(orderRow());
+
+    const service = new OrdersService(prisma, mail, vouchers);
+    const result = await service.getOrderByCode('user-1', 'DH20260821ABCDEF');
+
+    expect(result.statusHistories).toEqual([
+      {
+        fromStatus: 'PENDING',
+        toStatus: 'CONFIRMED',
+        note: null,
+        createdAt: new Date('2026-08-21T02:00:00Z'),
+      },
+      {
+        fromStatus: null,
+        toStatus: 'PENDING',
+        note: null,
+        createdAt: new Date('2026-08-21T01:00:00Z'),
+      },
+    ]);
   });
 
   it('không tìm thấy orderCode → NotFoundException', async () => {

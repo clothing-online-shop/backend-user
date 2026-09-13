@@ -277,18 +277,28 @@ export class OrdersService {
 
   // Dùng cho trang cảm ơn/theo dõi đơn — cần đọc lại được bất kỳ lúc nào (refresh, quay
   // lại, mở link đã lưu), không thể chỉ dựa vào response giữ trong state của POST /orders.
+  // Kèm lịch sử trạng thái để FE dựng timeline. Không tìm thấy / không thuộc user → gộp 1
+  // 404 tránh lộ mã đơn người khác.
   async getOrderByCode(userId: string, orderCode: string) {
     const order = await this.prisma.order.findUnique({
       where: { orderCode },
-      include: { items: true },
+      include: {
+        items: true,
+        statusHistories: { orderBy: { createdAt: 'desc' } },
+      },
     });
-    // Không tìm thấy HOẶC không thuộc về user hiện tại → gộp chung 1 404, không phân biệt
-    // 2 case để tránh lộ thông tin tồn tại của mã đơn người khác — khớp pattern đã dùng
-    // trong createOrder() (check địa chỉ/cart item).
     if (!order || order.userId !== userId) {
       throw new NotFoundException('Không tìm thấy đơn hàng.');
     }
-    return toOrderResponse(order);
+    return {
+      ...toOrderResponse(order),
+      statusHistories: order.statusHistories.map((h) => ({
+        fromStatus: h.fromStatus,
+        toStatus: h.toStatus,
+        note: h.note,
+        createdAt: h.createdAt,
+      })),
+    };
   }
 
   // Danh sách đơn của user — phân trang, lọc theo nhiều OrderStatus cùng lúc (đã validate ở DTO).
