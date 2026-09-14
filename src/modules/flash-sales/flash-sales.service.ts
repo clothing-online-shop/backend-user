@@ -9,6 +9,7 @@ export interface ActiveFlashSaleProduct {
   basePrice: number;
   salePrice: number;
   soldPercent: number;
+  soldCount: number;
   colors: string[];
 }
 
@@ -108,6 +109,7 @@ export class FlashSalesService {
           p.quantityLimit > 0
             ? Math.round((p.soldCount / p.quantityLimit) * 100)
             : 0,
+        soldCount: p.soldCount,
         colors: [...p.colors],
       })),
     };
