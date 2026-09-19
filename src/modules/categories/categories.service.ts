@@ -27,7 +27,7 @@ export class CategoriesService {
     // con (khớp yêu cầu hiển thị số lượng sản phẩm cạnh danh mục ở trang danh sách sản phẩm).
     const counts = await this.prisma.product.groupBy({
       by: ['categoryId'],
-      where: { status: ProductStatus.ACTIVE },
+      where: { status: ProductStatus.ACTIVE, isDelete: false },
       _count: true,
     });
     const directCountMap = new Map(counts.map((c) => [c.categoryId, c._count]));

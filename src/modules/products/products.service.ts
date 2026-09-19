@@ -24,7 +24,10 @@ export class ProductsService {
     const page = query.page ?? 1;
     const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
 
-    const where: Prisma.ProductWhereInput = { status: ProductStatus.ACTIVE };
+    const where: Prisma.ProductWhereInput = {
+      status: ProductStatus.ACTIVE,
+      isDelete: false,
+    };
 
     if (query.category) {
       const categoryIds = await this.resolveCategoryIds(query.category);
@@ -118,6 +121,7 @@ export class ProductsService {
       FROM products p
       LEFT JOIN brands b ON b.id = p."brandId"
       WHERE p.status = ${ProductStatus.ACTIVE}
+        AND p."isDelete" = false
         AND (
           word_similarity(immutable_unaccent(${term}), immutable_unaccent(p.name)) > 0.5
           OR word_similarity(immutable_unaccent(${term}), immutable_unaccent(coalesce(p.description, ''))) > 0.5
@@ -179,6 +183,7 @@ export class ProductsService {
       FROM products p
       LEFT JOIN brands b ON b.id = p."brandId"
       WHERE p.status = ${ProductStatus.ACTIVE}
+        AND p."isDelete" = false
         AND (
           immutable_unaccent(p.name) ILIKE immutable_unaccent(${'%' + q + '%'})
           OR word_similarity(immutable_unaccent(${q}), immutable_unaccent(p.name)) > 0.5
@@ -200,6 +205,7 @@ export class ProductsService {
       where: {
         id: { in: productIds },
         status: ProductStatus.ACTIVE,
+        isDelete: false,
       },
       include: { variants: true },
     });
@@ -234,7 +240,7 @@ export class ProductsService {
     });
 
     const status: ProductStatus | undefined = product?.status;
-    if (!product || status !== ProductStatus.ACTIVE) {
+    if (!product || product.isDelete || status !== ProductStatus.ACTIVE) {
       throw new NotFoundException('Không tìm thấy sản phẩm');
     }
 
@@ -245,6 +251,7 @@ export class ProductsService {
             categoryId: product.categoryId,
             id: { not: product.id },
             status: ProductStatus.ACTIVE,
+            isDelete: false,
           },
           include: {
             variants: {
