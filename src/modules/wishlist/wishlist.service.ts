@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Product, WishlistItem } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
+import { AVAILABLE_PRODUCT_WHERE } from '../../common/utils/product-availability.util';
 
 type WishlistItemWithProduct = WishlistItem & { product: Product };
 
@@ -10,7 +11,10 @@ export class WishlistService {
 
   async findMyWishlist(userId: string) {
     const items = await this.prisma.wishlistItem.findMany({
-      where: { userId },
+      // Ẩn sản phẩm đã xóa mềm/ngừng bán — trang chi tiết của chúng trả 404, để lại trong danh
+      // sách yêu thích chỉ cho ra thẻ chết. Dòng WishlistItem vẫn giữ nguyên trong DB (sản phẩm
+      // mở bán lại thì hiện lại).
+      where: { userId, product: AVAILABLE_PRODUCT_WHERE },
       orderBy: { createdAt: 'desc' },
       include: { product: true },
     });

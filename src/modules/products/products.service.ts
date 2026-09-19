@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { OrderStatus, Prisma, Product, ProductVariant } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
 import { ProductStatus } from './product-status.enum';
+import { AVAILABLE_PRODUCT_WHERE } from '../../common/utils/product-availability.util';
 import {
   ListProductsQueryDto,
   ProductSort,
@@ -24,10 +25,7 @@ export class ProductsService {
     const page = query.page ?? 1;
     const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
 
-    const where: Prisma.ProductWhereInput = {
-      status: ProductStatus.ACTIVE,
-      isDelete: false,
-    };
+    const where: Prisma.ProductWhereInput = { ...AVAILABLE_PRODUCT_WHERE };
 
     if (query.category) {
       const categoryIds = await this.resolveCategoryIds(query.category);
@@ -215,8 +213,7 @@ export class ProductsService {
     const products = await this.prisma.product.findMany({
       where: {
         id: { in: productIds },
-        status: ProductStatus.ACTIVE,
-        isDelete: false,
+        ...AVAILABLE_PRODUCT_WHERE,
       },
       include: { variants: true },
     });
@@ -261,8 +258,7 @@ export class ProductsService {
           where: {
             categoryId: product.categoryId,
             id: { not: product.id },
-            status: ProductStatus.ACTIVE,
-            isDelete: false,
+            ...AVAILABLE_PRODUCT_WHERE,
           },
           include: {
             variants: {
