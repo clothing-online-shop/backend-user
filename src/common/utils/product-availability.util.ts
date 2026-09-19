@@ -1,4 +1,4 @@
-import { Product } from '@prisma/client';
+import { Prisma, Product } from '@prisma/client';
 import { ProductStatus } from '../../modules/products/product-status.enum';
 
 // "Khả dụng để mua" phải xét cả 2 điều kiện: status ACTIVE VÀ chưa bị xóa mềm — sản phẩm
@@ -14,3 +14,12 @@ export function isProductAvailable(
   const status: ProductStatus = product.status;
   return status === ProductStatus.ACTIVE && !product.isDelete;
 }
+
+// Điều kiện Prisma tương đương isProductAvailable() — dùng trong `where` (kể cả lọc qua quan
+// hệ, vd `product: AVAILABLE_PRODUCT_WHERE`) để mọi truy vấn "sản phẩm hiển thị ở storefront"
+// lọc chung 1 chuẩn. Trước đây mỗi nơi tự viết `status: ACTIVE` mà quên `isDelete: false`,
+// khiến sản phẩm đã xóa mềm vẫn hiện trong danh sách/wishlist/đã xem gần đây.
+export const AVAILABLE_PRODUCT_WHERE = {
+  status: ProductStatus.ACTIVE,
+  isDelete: false,
+} satisfies Prisma.ProductWhereInput;
