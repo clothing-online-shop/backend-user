@@ -24,6 +24,11 @@ export class ListProductsQueryDto {
   @IsString()
   category?: string;
 
+  @ApiPropertyOptional({ description: 'Slug bộ sưu tập' })
+  @IsOptional()
+  @IsString()
+  collection?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)

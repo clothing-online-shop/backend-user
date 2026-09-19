@@ -28,6 +28,7 @@ import { ColorsModule } from './modules/colors/colors.module';
 import { FlashSalesModule } from './modules/flash-sales/flash-sales.module';
 import { BlogPostsModule } from './modules/blog-posts/blog-posts.module';
 import { UploadModule } from './modules/upload/upload.module';
+import { CollectionsModule } from './modules/collections/collections.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { UploadModule } from './modules/upload/upload.module';
     FlashSalesModule,
     BlogPostsModule,
     UploadModule,
+    CollectionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

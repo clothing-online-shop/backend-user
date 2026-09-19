@@ -37,6 +37,17 @@ export class ProductsService {
       where.categoryId = { in: categoryIds };
     }
 
+    if (query.collection) {
+      const collection = await this.prisma.collection.findFirst({
+        where: { slug: query.collection, isDelete: false },
+        select: { id: true },
+      });
+      if (!collection) {
+        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+      }
+      where.collections = { some: { collectionId: collection.id } };
+    }
+
     if (query.minPrice !== undefined || query.maxPrice !== undefined) {
       where.basePrice = {
         ...(query.minPrice !== undefined ? { gte: query.minPrice } : {}),
