@@ -14,7 +14,11 @@ export class CollectionsService {
   async findActive() {
     const now = new Date();
     const collection = await this.prisma.collection.findFirst({
-      where: { isDelete: false, startDate: { lte: now }, endDate: { gte: now } },
+      where: {
+        isDelete: false,
+        startDate: { lte: now },
+        endDate: { gte: now },
+      },
       orderBy: { startDate: 'desc' },
     });
     if (!collection) return null;
@@ -48,6 +52,8 @@ export class CollectionsService {
       slug: collection.slug,
       description: collection.description,
       imageUrl: collection.banner,
+      // Ảnh nền ngang cho hero trang bộ sưu tập — khác imageUrl (banner vuông, dùng ở trang chủ).
+      backgroundImageUrl: collection.backgroundImageUrl,
       productCount,
     };
   }

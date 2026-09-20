@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Category } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
-import { ProductStatus } from '../products/product-status.enum';
+import { AVAILABLE_PRODUCT_WHERE } from '../../common/utils/product-availability.util';
 
 export interface CategoryTreeNode extends Category {
   productCount: number;
@@ -27,7 +27,7 @@ export class CategoriesService {
     // con (khớp yêu cầu hiển thị số lượng sản phẩm cạnh danh mục ở trang danh sách sản phẩm).
     const counts = await this.prisma.product.groupBy({
       by: ['categoryId'],
-      where: { status: ProductStatus.ACTIVE },
+      where: AVAILABLE_PRODUCT_WHERE,
       _count: true,
     });
     const directCountMap = new Map(counts.map((c) => [c.categoryId, c._count]));

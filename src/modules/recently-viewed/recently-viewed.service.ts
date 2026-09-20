@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Product, RecentlyViewed } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
+import { AVAILABLE_PRODUCT_WHERE } from '../../common/utils/product-availability.util';
 
 export interface ViewerIdentity {
   userId?: string;
@@ -54,7 +55,8 @@ export class RecentlyViewedService {
     assertIdentity(identity);
 
     const items = await this.prisma.recentlyViewed.findMany({
-      where: identityWhere(identity),
+      // Chỉ hiện sản phẩm còn khả dụng — xem lý do ở WishlistService.findMyWishlist().
+      where: { ...identityWhere(identity), product: AVAILABLE_PRODUCT_WHERE },
       orderBy: { viewedAt: 'desc' },
       take: MAX_ITEMS,
       include: { product: true },

@@ -8,7 +8,9 @@ export class CollectionsController {
   constructor(private readonly collectionsService: CollectionsService) {}
 
   @Get('active')
-  @ApiOperation({ summary: 'Bộ sưu tập đang diễn ra để quảng bá ở trang chủ (public)' })
+  @ApiOperation({
+    summary: 'Bộ sưu tập đang diễn ra để quảng bá ở trang chủ (public)',
+  })
   findActive() {
     return this.collectionsService.findActive();
   }
